@@ -1,0 +1,188 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "$connections": {
+      "type": "Object",
+      "defaultValue": {}
+    },
+    "projectAgentsEndpoint": {
+      "type": "String",
+      "defaultValue": ""
+    },
+    "orchestratorAgentId": {
+      "type": "String",
+      "defaultValue": ""
+    },
+    "agentsApiVersion": {
+      "type": "String",
+      "defaultValue": "2025-05-01"
+    }
+  },
+  "triggers": {
+    "When_a_new_email_arrives_V3": {
+      "type": "ApiConnection",
+      "recurrence": {
+        "frequency": "Minute",
+        "interval": 3
+      },
+      "inputs": {
+        "host": {
+          "connection": {
+            "name": "@parameters('$connections')['office365']['connectionId']"
+          }
+        },
+        "method": "get",
+        "path": "/v3/Mail/OnNewEmail",
+        "queries": {
+          "folderPath": "Inbox",
+          "includeAttachments": true,
+          "fetchOnlyWithAttachment": true,
+          "importance": "Any"
+        }
+      }
+    }
+  },
+  "actions": {
+    "Initialize_attachmentUrls": {
+      "type": "InitializeVariable",
+      "runAfter": {},
+      "inputs": {
+        "variables": [
+          {
+            "name": "attachmentUrls",
+            "type": "Array"
+          }
+        ]
+      }
+    },
+    "For_each_attachment": {
+      "type": "Foreach",
+      "runAfter": {
+        "Initialize_attachmentUrls": [
+          "Succeeded"
+        ]
+      },
+      "foreach": "@triggerBody()?['attachments']",
+      "actions": {
+        "If_pdf": {
+          "type": "If",
+          "expression": {
+            "and": [
+              {
+                "endsWith": [
+                  "@toLower(item()?['name'])",
+                  ".pdf"
+                ]
+              }
+            ]
+          },
+          "actions": {
+            "Create_blob": {
+              "type": "ApiConnection",
+              "inputs": {
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['azureblob']['connectionId']"
+                  }
+                },
+                "method": "post",
+                "body": "@base64ToBinary(item()?['contentBytes'])",
+                "headers": {
+                  "ReadFileMetadataFromServer": true
+                },
+                "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('agenticemailks'))}/files",
+                "queries": {
+                  "folderPath": "/incoming-attachments",
+                  "name": "@item()?['name']",
+                  "queryParametersSingleEncoded": true
+                }
+              }
+            },
+            "Append_blob_path": {
+              "type": "AppendToArrayVariable",
+              "runAfter": {
+                "Create_blob": [
+                  "Succeeded"
+                ]
+              },
+              "inputs": {
+                "name": "attachmentUrls",
+                "value": "@body('Create_blob')?['Path']"
+              }
+            }
+          },
+          "else": {
+            "actions": {}
+          }
+        }
+      }
+    },
+    "Compose_payload": {
+      "type": "Compose",
+      "runAfter": {
+        "For_each_attachment": [
+          "Succeeded"
+        ]
+      },
+      "inputs": {
+        "subject": "@triggerBody()?['subject']",
+        "from": "@triggerBody()?['from']",
+        "bodyPreview": "@triggerBody()?['bodyPreview']",
+        "body": "@triggerBody()?['body']",
+        "attachmentBlobs": "@variables('attachmentUrls')"
+      }
+    },
+    "If_orchestrator_configured": {
+      "type": "If",
+      "runAfter": {
+        "Compose_payload": [
+          "Succeeded"
+        ]
+      },
+      "expression": {
+        "and": [
+          {
+            "not": {
+              "equals": [
+                "@parameters('orchestratorAgentId')",
+                ""
+              ]
+            }
+          }
+        ]
+      },
+      "actions": {
+        "Call_orchestrator_agent": {
+          "type": "Http",
+          "inputs": {
+            "method": "POST",
+            "uri": "@{parameters('projectAgentsEndpoint')}/threads/runs?api-version=@{parameters('agentsApiVersion')}",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "body": {
+              "assistant_id": "@parameters('orchestratorAgentId')",
+              "thread": {
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": "@{string(outputs('Compose_payload'))}"
+                  }
+                ]
+              }
+            },
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "audience": "https://ai.azure.com"
+            }
+          }
+        }
+      },
+      "else": {
+        "actions": {}
+      }
+    }
+  },
+  "outputs": {}
+}

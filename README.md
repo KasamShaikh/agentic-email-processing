@@ -88,4 +88,114 @@ The deployment is idempotent — re-running it reconciles to the template.
 
 ---
 
-_Phases 2–5 will be documented here as they are implemented._
+## Phase 2 — Email ingestion (Logic Apps, Bicep) ✅ Deployed
+
+A **Consumption Logic App** (`logic-email-ks`) handles the event-driven email
+integration. It is deployed as Bicep into the existing resource group:
+
+| File | Purpose |
+|------|---------|
+| [`infra/phase2.bicep`](./infra/phase2.bicep) | Logic App + Office 365 Outlook + Azure Blob API connections |
+| [`infra/logic-workflow.json`](./infra/logic-workflow.json) | The workflow definition (trigger → loop → blob → call orchestrator) |
+| [`infra/phase2.bicepparam`](./infra/phase2.bicepparam) | Parameter values (no secrets) |
+
+### What the workflow does
+
+1. **Trigger** — *When a new email arrives (V3)* (Office 365 Outlook), Inbox, attachments included.
+2. **For each attachment** — if the file ends in `.pdf`, **Create blob** into the
+   `incoming-attachments` container and collect its path.
+3. **Compose payload** — `{ subject, from, bodyPreview, body, attachmentBlobs }`.
+4. **Call orchestrator agent** — when `orchestratorAgentId` is set, POST the payload to
+   the Foundry agents endpoint (`/threads/runs`) using the Logic App's **managed identity**.
+
+### Deploy / redeploy
+
+```powershell
+az deployment group create `
+  --resource-group agentic-email-processing `
+  --template-file infra/phase2.bicep `
+  --parameters infra/phase2.bicepparam
+```
+
+### ⚠️ One-time manual step (cannot be automated)
+
+The **Office 365 Outlook** API connection requires an interactive OAuth consent. After
+the first deploy, open the **Azure Portal → Resource group → `office365-ks` connection
+→ Edit API connection → Authorize**, sign in with the mailbox account, and save. Until
+this is done the email trigger will not fire. (The Azure Blob connection uses the
+storage key fetched at deploy time and needs no manual step.)
+
+### What got created
+
+| Resource | Name | Notes |
+|----------|------|-------|
+| Logic App (Consumption) | `logic-email-ks` | System-assigned managed identity enabled |
+| Office 365 Outlook connection | `office365-ks` | **Needs manual Authorize** (see above) |
+| Azure Blob connection | `azureblob-ks` | Uses storage key (fetched via `listKeys` at deploy) |
+
+The Logic App's managed identity is granted **Cognitive Services User** on the Foundry
+account/project so it can call the orchestrator agent.
+
+---
+
+## Phase 3 — Foundry agents (Connected Agents) ✅ Deployed
+
+Foundry agents are **data-plane** objects (they live inside the project, not in ARM),
+so they **cannot** be expressed in Bicep. The IaC equivalent is a versioned script that
+reads instruction files and (re)creates the agents idempotently.
+
+| File | Purpose |
+|------|---------|
+| [`agents/deploy_agents.py`](./agents/deploy_agents.py) | Creates the 5 agents and wires the Connected Agents graph |
+| [`agents/requirements.txt`](./agents/requirements.txt) | `azure-ai-agents`, `azure-identity` |
+| [`agents/orchestrator.md`](./agents/orchestrator.md) | Orchestrator instructions (intent + routing) |
+| [`agents/contract_note.md`](./agents/contract_note.md) | Contract Note Upload agent |
+| [`agents/pre_onboarding.md`](./agents/pre_onboarding.md) | Merchant Pre-Onboarding agent |
+| [`agents/form_verification.md`](./agents/form_verification.md) | Foundry Form Verification agent |
+| [`agents/manual.md`](./agents/manual.md) | Manual Intervention agent |
+
+### Agent graph (Connected Agents)
+
+```mermaid
+flowchart TD
+    O[orchestrator-ks] -->|contract_note| C[contract-note-ks]
+    O -->|pre_onboarding| P[pre-onboarding-ks]
+    O -->|manual| M[manual-intervention-ks]
+    P -->|form_verification| F[form-verification-ks]
+```
+
+The orchestrator classifies intent (`contract_note | pre_onboarding | manual`) and
+delegates to the matching connected agent. `pre-onboarding-ks` further delegates field
+validation to `form-verification-ks`. `contract-note-ks` and `form-verification-ks`
+have the **Code Interpreter** tool for formatting/validation.
+
+### Prerequisites
+
+The identity running the script needs the **Cognitive Services User** role on the
+Foundry account (data action `Microsoft.CognitiveServices/*`):
+
+```powershell
+$acct = az cognitiveservices account show -g agentic-email-processing -n foundry-ks --query id -o tsv
+az role assignment create --assignee <your-object-id> --role "Cognitive Services User" --scope $acct
+```
+
+### Create / update the agents
+
+```powershell
+pip install -r agents/requirements.txt
+python agents/deploy_agents.py
+```
+
+The script prints `ORCHESTRATOR_AGENT_ID=...`. Wire it into the Logic App so Phase 2 can
+call the orchestrator:
+
+```powershell
+az deployment group create `
+  --resource-group agentic-email-processing `
+  --template-file infra/phase2.bicep `
+  --parameters infra/phase2.bicepparam orchestratorAgentId=<asst_...>
+```
+
+---
+
+_Phases 4–5 will be documented here as they are implemented._

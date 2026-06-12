@@ -97,13 +97,15 @@ flowchart TD
 | Phase | Description | Status |
 |-------|-------------|--------|
 | **Phase 1** | **Provision foundation (Bicep)** — Foundry project, model, storage, Doc Intelligence | ✅ Deployed |
-| Phase 2 | Email ingestion (Logic Apps) — Outlook trigger, attachments → Blob, call orchestrator | ⬜ Planned |
-| Phase 3 | Foundry agents — orchestrator + 3 specialist agents (Connected Agents) | ⬜ Planned |
+| **Phase 2** | **Email ingestion (Logic Apps, Bicep)** — Outlook trigger, attachments → Blob, call orchestrator | ✅ Deployed |
+| **Phase 3** | **Foundry agents (SDK script)** — orchestrator + 4 specialist agents (Connected Agents) | ✅ Deployed |
 | Phase 4 | Wire actions back — Blob output, human notification | ⬜ Planned |
 | Phase 5 | Test & verify — 3 test emails, one per branch | ⬜ Planned |
 
-> Deployment approach for the demo: **Azure Portal / click-ops**. Infrastructure-as-Code
-> (Bicep/azd) can be added later for production hardening.
+> Deployment approach: **Infrastructure-as-Code**. Control-plane resources (Phases 1–2)
+> are **Bicep**; Foundry agents (Phase 3) are **data-plane** objects, so they are
+> created with a versioned **Python SDK script** ([`agents/deploy_agents.py`](./agents/deploy_agents.py))
+> — the IaC equivalent for the agent layer.
 
 ---
 
