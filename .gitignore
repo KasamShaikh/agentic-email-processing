@@ -1,0 +1,13 @@
+# Local env / secrets
+*.env
+.env
+.env.*
+*.local
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Azure
+.azure/
