@@ -68,7 +68,7 @@ flowchart TD
 | Resource | Name | Notes |
 |----------|------|-------|
 | Resource group | `agentic-email-processing` | |
-| Azure AI Foundry (AI Services) resource | `foundry-ks` | |
+| Azure AI Foundry (AI Services) resource | `foundry-ks` | Deployed in **Sweden Central** (GlobalStandard model support) |
 | Foundry project | `email-agentic-ks` | |
 | Model deployment | `gpt-mini-ks` | model chosen below |
 | Storage account | `agenticemailks` | ⚠️ Storage account names **cannot contain hyphens** (3–24 lowercase alphanumeric). This is the one exception to the `-ks` rule. |
@@ -80,10 +80,13 @@ flowchart TD
 ### Model selection
 
 - **Requested:** a GPT‑5‑series "mini" model.
-- **Reality:** GPT‑5‑series models are region-limited and are typically **not yet
-  available in Central India**. Verify in the portal model catalog first.
-- **Recommended fallback (available in Central India):** **`gpt-4.1-mini`**
-  (or `gpt-4o-mini`) — fast and cost-effective, ideal for a PoC.
+- **Found:** `gpt-5.4-mini` (v2026-03-17) **is** available in India — but Central
+  India offers it **only as PTU** (`GlobalProvisionedManaged`), with no
+  pay-as-you-go `Standard`/`GlobalStandard`.
+- **Decision (PoC):** deploy **`gpt-5.4-mini`** as **GlobalStandard** (pay-as-you-go,
+  no capacity commitment) on a Foundry account in **Sweden Central**. Data resources
+  (Storage, Document Intelligence) stay in **Central India**. GlobalStandard routes
+  globally, so the app still serves from India.
 - The deployment is named `gpt-mini-ks` so the underlying model can be swapped
   without renaming downstream references.
 
@@ -93,7 +96,7 @@ flowchart TD
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| **Phase 1** | **Provision foundation (Portal)** — Foundry project, model, storage, Doc Intelligence | ▶️ In progress |
+| **Phase 1** | **Provision foundation (Bicep)** — Foundry project, model, storage, Doc Intelligence | ✅ Deployed |
 | Phase 2 | Email ingestion (Logic Apps) — Outlook trigger, attachments → Blob, call orchestrator | ⬜ Planned |
 | Phase 3 | Foundry agents — orchestrator + 3 specialist agents (Connected Agents) | ⬜ Planned |
 | Phase 4 | Wire actions back — Blob output, human notification | ⬜ Planned |
