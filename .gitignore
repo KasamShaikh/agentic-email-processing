@@ -11,3 +11,6 @@ Thumbs.db
 
 # Azure
 .azure/
+
+# Compiled Bicep (build artifact)
+infra/*.json
