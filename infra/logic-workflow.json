@@ -40,7 +40,8 @@
           "fetchOnlyWithAttachment": true,
           "importance": "Any"
         }
-      }
+      },
+      "splitOn": "@triggerBody()?['value']"
     }
   },
   "actions": {
@@ -63,7 +64,7 @@
           "Succeeded"
         ]
       },
-      "foreach": "@triggerBody()?['attachments']",
+      "foreach": "@coalesce(triggerBody()?['attachments'], json('[]'))",
       "actions": {
         "If_pdf": {
           "type": "If",
