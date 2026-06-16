@@ -19,6 +19,7 @@ to disk — the subscription id is read live from `az account show`.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import time
@@ -44,6 +45,18 @@ TOOL_TO_AGENT = {
     "pre_onboarding": "pre-onboarding-ks",
     "manual": "manual-intervention-ks",
     "form_verification": "form-verification-ks",
+}
+
+# intent -> specialist agent (code-driven routing)
+INTENT_TO_AGENT = {
+    "contract_note": "contract-note-ks",
+    "pre_onboarding": "pre-onboarding-ks",
+    "manual": "manual-intervention-ks",
+}
+INTENT_LABEL = {
+    "contract_note": "Contract Note",
+    "pre_onboarding": "Merchant Pre-Onboarding",
+    "manual": "Manual Intervention",
 }
 
 SAMPLES = {
@@ -117,6 +130,63 @@ def _detect_agents(step_dict: dict, id_to_name: dict[str, str]) -> list[str]:
         if aid in blob and aname != ORCHESTRATOR_NAME:
             hits.add(aname)
     return sorted(hits)
+
+
+def _agent_reply(ag, thread_id: str) -> str:
+    """Latest assistant text on a thread."""
+    for msg in ag.messages.list(thread_id=thread_id):
+        md = msg.as_dict()
+        if md.get("role") == "assistant":
+            parts = [
+                c.get("text", {}).get("value", "")
+                for c in md.get("content", [])
+                if c.get("type") == "text"
+            ]
+            text = "\n".join(p for p in parts if p).strip()
+            if text:
+                return text
+    return ""
+
+
+def _run_agent(ag, agent_id: str, content: str) -> dict:
+    """Run one leaf agent to completion; return status/text/error."""
+    thread = ag.threads.create()
+    ag.messages.create(thread_id=thread.id, role="user", content=content)
+    run = ag.runs.create_and_process(thread_id=thread.id, agent_id=agent_id)
+    status = str(run.status).split(".")[-1].lower()
+    err = None
+    if getattr(run, "last_error", None):
+        le = run.last_error
+        err = le.as_dict() if hasattr(le, "as_dict") else str(le)
+    return {
+        "status": status,
+        "text": _agent_reply(ag, thread.id),
+        "threadId": thread.id,
+        "runId": run.id,
+        "error": err,
+    }
+
+
+def _parse_intent(text: str) -> tuple[str, str]:
+    """Extract {intent, reason} from the classifier output (robust to extra prose)."""
+    intent, reason = "", ""
+    match = re.search(r"\{.*\}", text or "", re.S)
+    if match:
+        try:
+            obj = json.loads(match.group(0))
+            intent = str(obj.get("intent", "")).strip()
+            reason = str(obj.get("reason", "")).strip()
+        except Exception:  # noqa: BLE001
+            pass
+    if intent not in INTENT_TO_AGENT:
+        low = (text or "").lower()
+        if "contract" in low or "trade" in low:
+            intent = "contract_note"
+        elif "onboard" in low or "merchant" in low or "kyc" in low:
+            intent = "pre_onboarding"
+        else:
+            intent = "manual"
+    return intent, reason
 
 
 # --------------------------------------------------------------------------- #
@@ -225,13 +295,16 @@ def api_stream(
         try:
             ag = client()
             id_to_name = _agents_index()
-            orchestrator_id = next(
-                (aid for aid, n in id_to_name.items() if n == ORCHESTRATOR_NAME), None
-            )
+            name_to_id = {n: i for i, n in id_to_name.items()}
+            orchestrator_id = name_to_id.get(ORCHESTRATOR_NAME)
             if not orchestrator_id:
                 yield _sse({"type": "error", "message": "orchestrator-ks not found"})
                 return
 
+            payload_str = json.dumps(payload)
+            agents_called: list[str] = []
+
+            # 2) Orchestrator = intent classifier ------------------------- #
             yield _sse(
                 {
                     "type": "orchestrator_start",
@@ -240,87 +313,94 @@ def api_stream(
                     "ts": time.time(),
                 }
             )
-
-            thread = ag.threads.create()
-            ag.messages.create(
-                thread_id=thread.id, role="user", content=json.dumps(payload)
-            )
-            run = ag.runs.create(thread_id=thread.id, agent_id=orchestrator_id)
+            yield _sse({"type": "status", "status": "running", "ts": time.time()})
+            orc = _run_agent(ag, orchestrator_id, payload_str)
             yield _sse(
                 {
                     "type": "run_created",
-                    "threadId": thread.id,
-                    "runId": run.id,
-                    "status": str(run.status),
+                    "threadId": orc["threadId"],
+                    "runId": orc["runId"],
+                    "status": orc["status"],
+                    "ts": time.time(),
+                }
+            )
+            if orc["status"] != "completed":
+                yield _sse(
+                    {
+                        "type": "done",
+                        "status": orc["status"],
+                        "agentsCalled": [],
+                        "finalMessage": "",
+                        "error": orc["error"],
+                        "threadId": orc["threadId"],
+                        "ts": time.time(),
+                    }
+                )
+                return
+
+            intent, reason = _parse_intent(orc["text"])
+            yield _sse(
+                {
+                    "type": "intent",
+                    "intent": intent,
+                    "label": INTENT_LABEL.get(intent, intent),
+                    "reason": reason,
                     "ts": time.time(),
                 }
             )
 
-            # 2) Poll until terminal, streaming new steps ------------------ #
-            seen_steps: set[str] = set()
-            agents_called: list[str] = []
-            terminal = {"completed", "failed", "cancelled", "expired"}
-            for _ in range(120):  # ~2 min max
-                run = ag.runs.get(thread_id=thread.id, run_id=run.id)
-                status = str(run.status).split(".")[-1].lower()
-                yield _sse({"type": "status", "status": status, "ts": time.time()})
+            # 3) Route to the matching specialist (in code) --------------- #
+            results: list[dict] = []
+            target = INTENT_TO_AGENT[intent]
+            yield _sse({"type": "agent_called", "name": target, "ts": time.time()})
+            agents_called.append(target)
+            spec = _run_agent(ag, name_to_id[target], payload_str)
+            yield _sse(
+                {
+                    "type": "result",
+                    "agent": target,
+                    "status": spec["status"],
+                    "text": spec["text"],
+                    "error": spec["error"],
+                    "ts": time.time(),
+                }
+            )
+            results.append({"agent": target, "result": spec["text"]})
 
-                for step in ag.run_steps.list(thread_id=thread.id, run_id=run.id):
-                    if step.id in seen_steps:
-                        continue
-                    seen_steps.add(step.id)
-                    d = step.as_dict()
-                    detected = _detect_agents(d, id_to_name)
-                    for name in detected:
-                        if name not in agents_called:
-                            agents_called.append(name)
-                            yield _sse(
-                                {"type": "agent_called", "name": name, "ts": time.time()}
-                            )
-                    yield _sse(
-                        {
-                            "type": "step",
-                            "stepType": d.get("type"),
-                            "status": d.get("status"),
-                            "agents": detected,
-                            "ts": time.time(),
-                        }
-                    )
+            # 3b) Pre-onboarding chains to form-verification -------------- #
+            if intent == "pre_onboarding" and spec["status"] == "completed":
+                fv = "form-verification-ks"
+                yield _sse({"type": "agent_called", "name": fv, "ts": time.time()})
+                agents_called.append(fv)
+                fv_input = spec["text"] or payload_str
+                fvr = _run_agent(ag, name_to_id[fv], fv_input)
+                yield _sse(
+                    {
+                        "type": "result",
+                        "agent": fv,
+                        "status": fvr["status"],
+                        "text": fvr["text"],
+                        "error": fvr["error"],
+                        "ts": time.time(),
+                    }
+                )
+                results.append({"agent": fv, "result": fvr["text"]})
 
-                if status in terminal:
-                    break
-                time.sleep(1)
-
-            # 3) Final answer --------------------------------------------- #
-            final_text = ""
-            try:
-                for msg in ag.messages.list(thread_id=thread.id):
-                    md = msg.as_dict()
-                    if md.get("role") == "assistant":
-                        parts = [
-                            c.get("text", {}).get("value", "")
-                            for c in md.get("content", [])
-                            if c.get("type") == "text"
-                        ]
-                        final_text = "\n".join(p for p in parts if p).strip()
-                        if final_text:
-                            break
-            except Exception:  # noqa: BLE001
-                pass
-
-            error = None
-            if getattr(run, "last_error", None):
-                le = run.last_error
-                error = le.as_dict() if hasattr(le, "as_dict") else str(le)
-
+            # 4) Final summary -------------------------------------------- #
+            final = {
+                "intent": intent,
+                "delegated_to": agents_called,
+                "results": results,
+            }
             yield _sse(
                 {
                     "type": "done",
-                    "status": status,
+                    "status": "completed",
+                    "intent": intent,
                     "agentsCalled": agents_called,
-                    "finalMessage": final_text,
-                    "error": error,
-                    "threadId": thread.id,
+                    "finalMessage": json.dumps(final, indent=2),
+                    "error": None,
+                    "threadId": orc["threadId"],
                     "ts": time.time(),
                 }
             )

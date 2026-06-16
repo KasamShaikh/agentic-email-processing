@@ -289,9 +289,19 @@ function run(){
       case "status":
         setStatus(ev.status);
         break;
+      case "intent":
+        addEvent("orch","◆ Intent classified", `<span class="tag">${ev.label||ev.intent}</span>${ev.reason?`<br><span class="meta">${escapeHtml(ev.reason)}</span>`:""}`, ev.ts);
+        break;
       case "agent_called":
         setNode(ev.name,"called");
         addEvent("agent","→ Routed to specialist", `<span class="tag">${ev.name}</span>`, ev.ts);
+        break;
+      case "result":
+        const ok = ev.status==="completed";
+        let rb = `<span class="tag">${ev.agent}</span> <span class="meta">${ev.status}</span>`;
+        if (ev.text) rb += `<div class="answer-box">${escapeHtml(ev.text)}</div>`;
+        if (ev.error) rb += `<div class="err">⚠ ${escapeHtml(typeof ev.error==="string"?ev.error:JSON.stringify(ev.error))}</div>`;
+        addEvent(ok?"agent":"error","◳ Agent output", rb, ev.ts);
         break;
       case "step":
         addEvent("step","Run step", `<code>${ev.stepType}</code> · ${ev.status||""}${ev.agents&&ev.agents.length?` → ${ev.agents.map(a=>`<span class="tag">${a}</span>`).join(" ")}`:""}`, ev.ts);

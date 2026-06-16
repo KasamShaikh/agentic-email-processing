@@ -1,13 +1,17 @@
 """
-Phase 3 — create the Foundry agents (orchestrator + connected specialists).
+Phase 3 — create the Foundry agents (intent classifier + leaf specialists).
 
 Agents are DATA-PLANE objects in the Foundry project, so they cannot be expressed in
 Bicep/ARM. This script is the IaC equivalent for Phase 3: it reads the versioned
-instruction files in this folder and (re)creates the agents idempotently, wiring the
-specialists to the orchestrator via the Connected Agents pattern.
+instruction files in this folder and (re)creates the agents idempotently.
+
+Routing model: the orchestrator is a pure INTENT CLASSIFIER (returns JSON `{intent}`)
+and the routing/delegation to specialists is performed in code (see dashboard/app.py
+and agents/test_orchestrator.py). The Foundry "connected agents (classic)" tool is not
+used — it is unsupported on this endpoint/model and fails server-side.
 
 Auth: uses DefaultAzureCredential (your `az login` identity). The identity needs the
-"Azure AI Developer" role on the Foundry account.
+"Cognitive Services User" role on the Foundry account.
 
 Usage:
     pip install -r requirements.txt
@@ -19,7 +23,7 @@ import pathlib
 
 from azure.identity import DefaultAzureCredential
 from azure.ai.agents import AgentsClient
-from azure.ai.agents.models import ConnectedAgentTool, CodeInterpreterTool
+from azure.ai.agents.models import CodeInterpreterTool
 
 ENDPOINT = os.environ.get(
     "PROJECT_ENDPOINT",
@@ -50,7 +54,8 @@ def main() -> None:
     )
 
     # Idempotency: remove any prior copies of our agents before recreating.
-    for existing in agents.list_agents():
+    # Materialise the list first — deleting while paging corrupts the iterator.
+    for existing in list(agents.list_agents()):
         if existing.name in AGENT_NAMES:
             agents.delete_agent(existing.id)
             print(f"deleted existing agent: {existing.name} ({existing.id})")
@@ -79,43 +84,19 @@ def main() -> None:
     )
     print(f"created manual-intervention-ks: {manual.id}")
 
-    # --- Pre-onboarding delegates to form-verification ---------------------
-    form_tool = ConnectedAgentTool(
-        id=form.id,
-        name="form_verification",
-        description="Validate extracted merchant onboarding fields and return a verdict.",
-    )
+    # --- Pre-onboarding: leaf extractor (routing done in code) -------------
     pre = agents.create_agent(
         model=MODEL,
         name="pre-onboarding-ks",
         instructions=instructions("pre_onboarding"),
-        tools=form_tool.definitions,
     )
     print(f"created pre-onboarding-ks: {pre.id}")
 
-    # --- Orchestrator delegates to the three top-level routes --------------
-    orchestrator_tools = (
-        ConnectedAgentTool(
-            id=contract.id,
-            name="contract_note",
-            description="Process contract note PDFs and produce a standardised text file.",
-        ).definitions
-        + ConnectedAgentTool(
-            id=pre.id,
-            name="pre_onboarding",
-            description="Verify merchant pre-onboarding documents.",
-        ).definitions
-        + ConnectedAgentTool(
-            id=manual.id,
-            name="manual",
-            description="Route the email to a human for manual handling.",
-        ).definitions
-    )
+    # --- Orchestrator: pure intent classifier (routing done in code) -------
     orchestrator = agents.create_agent(
         model=MODEL,
         name="orchestrator-ks",
         instructions=instructions("orchestrator"),
-        tools=orchestrator_tools,
     )
     print(f"created orchestrator-ks: {orchestrator.id}")
 
