@@ -9,6 +9,10 @@
 Thumbs.db
 .vscode/
 
+# Python
+__pycache__/
+*.pyc
+
 # Azure
 .azure/
 
