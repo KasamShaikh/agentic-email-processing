@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Agentic Email Processing · Live Operations</title>
+<style>
+  :root {
+    --maroon: #97144D;
+    --maroon-deep: #7A0F3E;
+    --magenta: #E5007D;
+    --magenta-soft: #f4a8cf;
+    --ink: #241019;
+    --muted: #8a7480;
+    --line: #ecdfe6;
+    --bg: #faf6f8;
+    --card: #ffffff;
+    --ok: #1a8f5e;
+    --warn: #c8861a;
+    --fail: #c5223b;
+    --shadow: 0 6px 24px rgba(122, 15, 62, 0.08);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+  header.topbar {
+    background: linear-gradient(100deg, var(--maroon-deep), var(--maroon) 55%, var(--magenta));
+    color: #fff;
+    padding: 18px 28px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    box-shadow: var(--shadow);
+  }
+  .brand-mark {
+    width: 40px; height: 40px; border-radius: 10px;
+    background: #fff; color: var(--maroon);
+    display: grid; place-items: center;
+    font-weight: 800; font-size: 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.18);
+  }
+  .topbar h1 { font-size: 19px; margin: 0; font-weight: 700; letter-spacing: .2px; }
+  .topbar p { margin: 2px 0 0; font-size: 12.5px; opacity: .85; }
+  .topbar .spacer { flex: 1; }
+  .live-dot {
+    display:inline-flex; align-items:center; gap:7px;
+    font-size:12px; background: rgba(255,255,255,.16);
+    padding:6px 12px; border-radius: 20px;
+  }
+  .live-dot i { width:8px; height:8px; border-radius:50%; background:#7CFFB2; box-shadow:0 0 0 0 rgba(124,255,178,.7); animation: pulse 1.6s infinite; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(124,255,178,.6)} 70%{box-shadow:0 0 0 9px rgba(124,255,178,0)} 100%{box-shadow:0 0 0 0 rgba(124,255,178,0)} }
+
+  .wrap { max-width: 1320px; margin: 22px auto; padding: 0 20px; display: grid;
+          grid-template-columns: 320px 1fr 340px; gap: 18px; align-items: start; }
+  @media (max-width: 1100px){ .wrap{ grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    box-shadow: var(--shadow); overflow: hidden;
+  }
+  .card h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .8px;
+    color: var(--maroon); margin: 0; padding: 14px 18px;
+    border-bottom: 1px solid var(--line); display:flex; align-items:center; gap:8px;
+  }
+  .card .body { padding: 16px 18px; }
+
+  /* trigger panel */
+  .sample-btn {
+    width: 100%; text-align: left; border: 1px solid var(--line);
+    background: #fff; border-radius: 12px; padding: 12px 14px; margin-bottom: 10px;
+    cursor: pointer; transition: .15s; display:flex; flex-direction:column; gap:3px;
+  }
+  .sample-btn:hover { border-color: var(--magenta-soft); transform: translateY(-1px); box-shadow: var(--shadow); }
+  .sample-btn.active { border-color: var(--maroon); background: #fdf2f7; }
+  .sample-btn b { font-size: 13.5px; }
+  .sample-btn span { font-size: 11.5px; color: var(--muted); }
+  textarea {
+    width: 100%; border: 1px solid var(--line); border-radius: 12px; padding: 11px;
+    font-family: inherit; font-size: 12.5px; resize: vertical; min-height: 70px; color: var(--ink);
+  }
+  .run-btn {
+    width: 100%; margin-top: 12px; border: none; cursor: pointer;
+    background: linear-gradient(100deg, var(--maroon), var(--magenta));
+    color: #fff; font-weight: 700; font-size: 14px; padding: 13px; border-radius: 12px;
+    letter-spacing: .3px; transition: .15s;
+  }
+  .run-btn:hover { filter: brightness(1.06); }
+  .run-btn:disabled { opacity: .55; cursor: not-allowed; }
+
+  /* flow diagram */
+  .flow { display:flex; flex-direction:column; gap:10px; }
+  .node {
+    display:flex; align-items:center; gap:11px; padding:11px 13px;
+    border:1.5px solid var(--line); border-radius:13px; background:#fff; transition:.25s;
+    position: relative;
+  }
+  .node .ic { width:30px; height:30px; border-radius:9px; display:grid; place-items:center; font-size:15px;
+              background:#f6eef3; color:var(--maroon); flex:none; }
+  .node .nm { font-size:13px; font-weight:600; }
+  .node .sub { font-size:11px; color:var(--muted); }
+  .node.fired { border-color: var(--maroon); background:#fdf2f7; box-shadow: 0 4px 16px rgba(151,20,77,.16); }
+  .node.fired .ic { background: var(--maroon); color:#fff; }
+  .node .chip { margin-left:auto; font-size:10px; padding:3px 8px; border-radius:20px; background:#f0e6ec; color:var(--muted); }
+  .node.fired .chip { background: var(--maroon); color:#fff; }
+  .connector { height:14px; width:2px; background: var(--line); margin-left:28px; }
+  .indent { margin-left: 26px; }
+
+  /* timeline */
+  .status-strip { display:flex; align-items:center; gap:10px; padding:12px 18px; border-bottom:1px solid var(--line); }
+  .pill { font-size:12px; font-weight:700; padding:5px 12px; border-radius:20px; }
+  .pill.idle{ background:#eee; color:#777; }
+  .pill.running{ background:#fff3da; color:var(--warn); }
+  .pill.completed{ background:#e3f6ec; color:var(--ok); }
+  .pill.failed,.pill.cancelled,.pill.expired{ background:#fde8eb; color:var(--fail); }
+  .meta { font-size:11.5px; color:var(--muted); }
+
+  .timeline { padding: 8px 18px 18px; position: relative; min-height: 280px; }
+  .tl-empty { color: var(--muted); font-size:13px; text-align:center; padding:60px 10px; }
+  .event {
+    position: relative; padding: 10px 0 10px 30px; border-left: 2px solid var(--line);
+    animation: fade .35s ease; margin-left: 6px;
+  }
+  .event:last-child { border-left-color: transparent; }
+  .event .dot { position:absolute; left:-7px; top:14px; width:12px; height:12px; border-radius:50%;
+                background:#fff; border:3px solid var(--magenta); }
+  .event.email .dot{ border-color:#5b6dd8; }
+  .event.orch .dot{ border-color: var(--maroon); }
+  .event.agent .dot{ border-color: var(--ok); }
+  .event.step .dot{ border-color: var(--warn); }
+  .event.final .dot{ border-color: var(--maroon-deep); }
+  .event.error .dot{ border-color: var(--fail); }
+  .ev-head { display:flex; align-items:center; gap:8px; }
+  .ev-title { font-size:13.5px; font-weight:700; }
+  .ev-time { font-size:11px; color:var(--muted); margin-left:auto; }
+  .ev-body { font-size:12.5px; color:#4a3a42; margin-top:4px; line-height:1.5; }
+  .ev-body code, .mono { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size:11.5px; }
+  .tag { display:inline-block; font-size:11px; font-weight:700; padding:2px 9px; border-radius:20px;
+         background:#fdf2f7; color:var(--maroon); border:1px solid #f3d6e4; }
+  .answer-box { background:#fbf4f8; border:1px solid #f1d8e5; border-radius:12px; padding:12px; margin-top:6px;
+                white-space:pre-wrap; font-size:12px; line-height:1.55; }
+  @keyframes fade { from{opacity:0; transform:translateY(6px)} to{opacity:1; transform:none} }
+
+  /* logic app runs */
+  .la-run { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px dashed var(--line); font-size:12px; }
+  .la-run:last-child{ border-bottom:none; }
+  .la-run .s { width:9px; height:9px; border-radius:50%; flex:none; }
+  .s.Succeeded{ background:var(--ok); } .s.Failed{ background:var(--fail); }
+  .s.Running{ background:var(--warn); } .s.Cancelled{ background:#999; }
+  .la-run .t { color:var(--ink); font-weight:600; }
+  .la-run .d { color:var(--muted); margin-left:auto; }
+  .refresh { font-size:11px; color:var(--maroon); cursor:pointer; background:none; border:none; font-weight:700; }
+  .err { font-size:11.5px; color:var(--fail); }
+  .footnote { font-size:11px; color:var(--muted); padding:0 18px 14px; }
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-mark">A</div>
+    <div>
+      <h1>Agentic Email Processing · Live Operations</h1>
+      <p>Email intake → Foundry orchestrator → specialist routing → run-step traces, in one screen</p>
+    </div>
+    <div class="spacer"></div>
+    <div class="live-dot"><i></i> Live</div>
+  </header>
+
+  <div class="wrap">
+    <!-- LEFT: trigger + agent inventory -->
+    <div style="display:flex; flex-direction:column; gap:18px;">
+      <section class="card">
+        <h2>▶ Simulate an email</h2>
+        <div class="body">
+          <div id="samples"></div>
+          <textarea id="customText" placeholder="…or paste a custom email body to classify"></textarea>
+          <button class="run-btn" id="runBtn">Run through the flow</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>⬡ Agent inventory</h2>
+        <div class="body" id="inventory"><div class="meta">Loading agents…</div></div>
+      </section>
+    </div>
+
+    <!-- CENTER: live trace -->
+    <section class="card">
+      <h2>◷ Live run trace</h2>
+      <div class="status-strip">
+        <span class="pill idle" id="statusPill">idle</span>
+        <span class="meta" id="statusMeta">Pick a sample and run it to watch the flow in real time.</span>
+      </div>
+      <div class="timeline" id="timeline">
+        <div class="tl-empty">No run yet — trigger an email on the left.</div>
+      </div>
+      <div class="footnote" id="threadNote"></div>
+    </section>
+
+    <!-- RIGHT: flow diagram + logic app runs -->
+    <div style="display:flex; flex-direction:column; gap:18px;">
+      <section class="card">
+        <h2>⇄ Routing map</h2>
+        <div class="body">
+          <div class="flow" id="flow">
+            <div class="node" data-node="email"><div class="ic">✉</div><div><div class="nm">Email received</div><div class="sub">Office 365 inbox</div></div></div>
+            <div class="connector"></div>
+            <div class="node" data-node="orchestrator-ks"><div class="ic">◎</div><div><div class="nm">Orchestrator</div><div class="sub">classifies intent</div></div><span class="chip">idle</span></div>
+            <div class="connector"></div>
+            <div class="node" data-node="contract-note-ks"><div class="ic">▤</div><div><div class="nm">Contract Note</div><div class="sub">extract & standardise</div></div><span class="chip">idle</span></div>
+            <div class="node" data-node="pre-onboarding-ks"><div class="ic">◍</div><div><div class="nm">Pre-Onboarding</div><div class="sub">verify merchant docs</div></div><span class="chip">idle</span></div>
+            <div class="node indent" data-node="form-verification-ks"><div class="ic">✓</div><div><div class="nm">Form Verification</div><div class="sub">validate fields</div></div><span class="chip">idle</span></div>
+            <div class="node" data-node="manual-intervention-ks"><div class="ic">☎</div><div><div class="nm">Manual Intervention</div><div class="sub">route to human</div></div><span class="chip">idle</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>⟳ Logic App runs <button class="refresh" id="refreshLA" style="margin-left:auto">refresh</button></h2>
+        <div class="body" id="laRuns"><div class="meta">Loading real email-triggered runs…</div></div>
+      </section>
+    </div>
+  </div>
+
+<script>
+const $ = (s, r=document) => r.querySelector(s);
+let currentSample = "contract";
+let es = null;
+
+function fmtTime(ts){ return new Date(ts*1000).toLocaleTimeString(); }
+function setNode(name, cls){ const n = $(`.node[data-node="${name}"]`); if(!n) return; n.classList.add("fired"); const c=n.querySelector(".chip"); if(c) c.textContent = cls||"fired"; }
+function resetNodes(){ document.querySelectorAll(".node").forEach(n=>{ n.classList.remove("fired"); const c=n.querySelector(".chip"); if(c && n.dataset.node!=="email") c.textContent="idle"; }); }
+
+function addEvent(kind, title, html, ts){
+  const tl = $("#timeline");
+  if(tl.querySelector(".tl-empty")) tl.innerHTML = "";
+  const el = document.createElement("div");
+  el.className = `event ${kind}`;
+  el.innerHTML = `<span class="dot"></span>
+    <div class="ev-head"><span class="ev-title">${title}</span><span class="ev-time">${ts?fmtTime(ts):""}</span></div>
+    ${html?`<div class="ev-body">${html}</div>`:""}`;
+  tl.appendChild(el);
+  tl.scrollTop = tl.scrollHeight;
+}
+
+function setStatus(s){
+  const pill = $("#statusPill");
+  const map = {idle:"idle", running:"running", queued:"running", in_progress:"running",
+               completed:"completed", failed:"failed", cancelled:"cancelled", expired:"expired"};
+  const cls = map[s] || "running";
+  pill.className = `pill ${cls}`;
+  pill.textContent = s;
+}
+
+function run(){
+  const btn = $("#runBtn");
+  btn.disabled = true;
+  resetNodes();
+  $("#timeline").innerHTML = "";
+  $("#threadNote").textContent = "";
+  setStatus("running");
+  $("#statusMeta").textContent = "Streaming live trace…";
+
+  const custom = $("#customText").value.trim();
+  const qs = custom ? `text=${encodeURIComponent(custom)}` : `sample=${currentSample}`;
+  if (es) es.close();
+  es = new EventSource(`/api/stream?${qs}`);
+
+  es.onmessage = (e) => {
+    const ev = JSON.parse(e.data);
+    switch(ev.type){
+      case "email":
+        setNode("email","received");
+        addEvent("email","📧 Email received",
+          `<b>${ev.subject||""}</b><br><span class="meta">from ${ev.from||"?"}</span><br>${(ev.body||"").slice(0,180)}
+           ${(ev.attachments&&ev.attachments.length)?`<br><span class="tag">${ev.attachments.length} attachment(s)</span>`:""}`, ev.ts);
+        break;
+      case "orchestrator_start":
+        setNode("orchestrator-ks","active");
+        addEvent("orch","◎ Orchestrator invoked", `Agent <code>${ev.name}</code> is classifying the intent…`, ev.ts);
+        break;
+      case "run_created":
+        addEvent("orch","Run created", `thread <code>${ev.threadId}</code><br>run <code>${ev.runId}</code>`, ev.ts);
+        break;
+      case "status":
+        setStatus(ev.status);
+        break;
+      case "agent_called":
+        setNode(ev.name,"called");
+        addEvent("agent","→ Routed to specialist", `<span class="tag">${ev.name}</span>`, ev.ts);
+        break;
+      case "step":
+        addEvent("step","Run step", `<code>${ev.stepType}</code> · ${ev.status||""}${ev.agents&&ev.agents.length?` → ${ev.agents.map(a=>`<span class="tag">${a}</span>`).join(" ")}`:""}`, ev.ts);
+        break;
+      case "done":
+        setStatus(ev.status);
+        const called = (ev.agentsCalled&&ev.agentsCalled.length)? ev.agentsCalled.map(a=>`<span class="tag">${a}</span>`).join(" ") : "<span class='meta'>none detected</span>";
+        let body = `<b>Agents that fired:</b> ${called}`;
+        if (ev.finalMessage) body += `<div class="answer-box">${escapeHtml(ev.finalMessage)}</div>`;
+        if (ev.error) body += `<div class="err">⚠ ${escapeHtml(typeof ev.error==="string"?ev.error:JSON.stringify(ev.error))}</div>`;
+        addEvent("final","✔ Flow finished", body, ev.ts);
+        $("#statusMeta").textContent = ev.status==="completed" ? "Run completed." : `Run ${ev.status}.`;
+        if(ev.threadId) $("#threadNote").innerHTML = `Thread <code>${ev.threadId}</code> — open in the Foundry portal to inspect every step.`;
+        es.close(); btn.disabled = false;
+        break;
+      case "error":
+        addEvent("error","⚠ Error", escapeHtml(ev.message), Date.now()/1000);
+        setStatus("failed"); $("#statusMeta").textContent = "Run errored.";
+        es.close(); btn.disabled = false;
+        break;
+    }
+  };
+  es.onerror = () => { btn.disabled = false; if(es) es.close(); };
+}
+
+function escapeHtml(s){ return (s||"").replace(/[&<>]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+async function loadSamples(){
+  try{
+    const r = await fetch("/api/samples"); const d = await r.json();
+    const box = $("#samples"); box.innerHTML = "";
+    const labels = {contract:"Contract Note", onboarding:"Merchant Pre-Onboarding", manual:"Manual / Other"};
+    Object.entries(d.samples).forEach(([k,subj],i)=>{
+      const b = document.createElement("button");
+      b.className = "sample-btn" + (i===0?" active":"");
+      b.innerHTML = `<b>${labels[k]||k}</b><span>${subj}</span>`;
+      b.onclick = ()=>{ currentSample=k; $("#customText").value=""; document.querySelectorAll(".sample-btn").forEach(x=>x.classList.remove("active")); b.classList.add("active"); };
+      box.appendChild(b);
+    });
+  }catch(e){ $("#samples").innerHTML = `<div class="err">Could not load samples.</div>`; }
+}
+
+async function loadInventory(){
+  try{
+    const r = await fetch("/api/agents"); const d = await r.json();
+    const box = $("#inventory"); box.innerHTML = "";
+    d.agents.sort((a,b)=> a.name==="orchestrator-ks"?-1:1).forEach(a=>{
+      const tools = a.connected.length? `connects → ${a.connected.join(", ")}` : (a.tools.length? a.tools.join(", ") : "no tools");
+      const el = document.createElement("div");
+      el.className = "la-run";
+      el.innerHTML = `<span class="s Succeeded"></span><div><div class="t">${a.name}</div><div class="meta mono">${a.model} · ${tools}</div></div>`;
+      box.appendChild(el);
+    });
+  }catch(e){ $("#inventory").innerHTML = `<div class="err">Could not load agents (az login?).</div>`; }
+}
+
+async function loadLA(){
+  const box = $("#laRuns"); box.innerHTML = `<div class="meta">Loading…</div>`;
+  try{
+    const r = await fetch("/api/logicapp/runs"); const d = await r.json();
+    if(d.error){ box.innerHTML = `<div class="err">${escapeHtml(d.error)}</div>`; return; }
+    if(!d.runs.length){ box.innerHTML = `<div class="meta">No runs yet.</div>`; return; }
+    box.innerHTML = "";
+    d.runs.forEach(run=>{
+      const start = run.startTime? new Date(run.startTime).toLocaleString() : "";
+      const el = document.createElement("div");
+      el.className = "la-run";
+      el.innerHTML = `<span class="s ${run.status}"></span><div class="t">${run.status}</div><span class="d">${start}</span>`;
+      box.appendChild(el);
+    });
+  }catch(e){ box.innerHTML = `<div class="err">Could not load Logic App runs.</div>`; }
+}
+
+$("#runBtn").onclick = run;
+$("#refreshLA").onclick = loadLA;
+loadSamples(); loadInventory(); loadLA();
+</script>
+</body>
+</html>
