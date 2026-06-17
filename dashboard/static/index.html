@@ -324,6 +324,38 @@ function handleEvent(ev, btn){
         if (ev.error) rb += `<div class="err">⚠ ${escapeHtml(typeof ev.error==="string"?ev.error:JSON.stringify(ev.error))}</div>`;
         addEvent(ok?"agent":"error","◳ Agent output", rb, ev.ts);
         break;
+      case "contract_start":
+        setNode("contract-note-ks","processing");
+        addEvent("agent","▣ Contract-note pipeline", `Processing ${(ev.attachments&&ev.attachments.length)||0} attachment(s)…`, ev.ts);
+        break;
+      case "attachment_fetched":
+        addEvent("step","📎 Attachment fetched", `<code>${escapeHtml(ev.name||"")}</code> <span class="meta">${ev.bytes||0} bytes</span>`, ev.ts);
+        break;
+      case "extracted":
+        addEvent("step","🔍 Document Intelligence", `<code>${escapeHtml(ev.name||"")}</code> → extracted <span class="meta">${ev.chars||0} chars</span>`, ev.ts);
+        break;
+      case "normalized":
+        addEvent("step","◆ Extracted to JSON", `<code>${escapeHtml(ev.name||"")}</code> <span class="meta">${ev.status||""}</span>`, ev.ts);
+        break;
+      case "note_parsed":
+        addEvent("agent","◳ Contract note parsed", `<span class="tag">${escapeHtml(ev.exchange||"")}</span> <span class="tag">${ev.transactionType==="S"?"Sale":"Purchase"}</span> note <code>${escapeHtml(ev.contractNoteNo||"")}</code> · ${ev.trades||0} trade(s)`, ev.ts);
+        break;
+      case "attachment_error":
+        addEvent("error","⚠ Attachment failed", `<code>${escapeHtml(ev.name||"")}</code><br><span class="err">${escapeHtml(ev.error||"")}</span>`, ev.ts);
+        break;
+      case "output_written":
+        setNode("contract-note-ks","output");
+        addEvent("final","💾 Output file written", `<a href="${escapeHtml(ev.url||"#")}" target="_blank"><b>${escapeHtml(ev.file||"")}</b></a> → <span class="meta">contract-notes-output</span>${ev.preview?`<div class="answer-box">${escapeHtml(ev.preview)}</div>`:""}`, ev.ts);
+        break;
+      case "output_error":
+        addEvent("error","⚠ Upload failed", `<code>${escapeHtml(ev.file||"")}</code><br><span class="err">${escapeHtml(ev.error||"")}</span>`, ev.ts);
+        break;
+      case "contract_done":
+        { const nf = (ev.files&&ev.files.length)||0;
+          let cb = `<b>${nf}</b> file(s) written from <b>${ev.notes||0}</b> contract note(s).`;
+          if (ev.warnings&&ev.warnings.length) cb += `<div class="err">⚠ ${ev.warnings.map(w=>escapeHtml(w)).join("<br>")}</div>`;
+          addEvent("agent","▣ Pipeline complete", cb, ev.ts); }
+        break;
       case "step":
         addEvent("step","Run step", `<code>${ev.stepType}</code> · ${ev.status||""}${ev.agents&&ev.agents.length?` → ${ev.agents.map(a=>`<span class="tag">${a}</span>`).join(" ")}`:""}`, ev.ts);
         break;
@@ -369,7 +401,7 @@ async function loadInventory(){
     const box = $("#inventory"); box.innerHTML = "";
     const agentDesc = {
       "orchestrator-ks": "Reads each incoming email and classifies its intent, then routes it to the right specialist agent.",
-      "contract-note-ks": "Extracts and standardises trade / contract-note details from the email and its attachments.",
+      "contract-note-ks": "Extracts trades from the contract-note attachments (Document Intelligence), resolves ISINs, and writes the pipe-delimited PIS upload file to the contract-notes-output container.",
       "pre-onboarding-ks": "Verifies merchant pre-onboarding documents and extracts KYC, registration and bank details.",
       "form-verification-ks": "Validates the extracted onboarding fields for completeness and correctness.",
       "manual-intervention-ks": "Flags emails that need a human and routes them for manual handling."

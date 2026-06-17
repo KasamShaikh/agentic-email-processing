@@ -209,6 +209,45 @@ az deployment group create `
 ```
 
 ---
+
+## Phase 4 — Contract note processing ✅
+
+When the orchestrator classifies an email as **contract_note**, a pipeline turns the
+attached broker contract notes (PDF or image) into the pipe-delimited **PIS LEC upload
+files** and writes them to the `contract-notes-output` container.
+
+Per attachment: download from `incoming-attachments` (managed identity) → extract text +
+tables with **Azure AI Document Intelligence** (`prebuilt-layout`) → `contract-note-ks`
+normalises it into structured JSON → ISINs resolved from the security master. All notes
+are then grouped **by exchange × Buy/Sale** (per the spec: *exchange-wise files, one
+purchase + one sales file per broker per trade date*) and written as `H`/`T` records.
+
+| File | Purpose |
+|------|---------|
+| [`agents/contract_note.md`](./agents/contract_note.md) | Extraction-agent instructions — emits strict JSON (no arithmetic/formatting) |
+| [`dashboard/contract_format.py`](./dashboard/contract_format.py) | Deterministic `H`/`T` formatter (spec layout, `Qty*(Rate±Brokerage)`, grouping, ISIN lookup) |
+| [`dashboard/contract_pipeline.py`](./dashboard/contract_pipeline.py) | Blob → Document Intelligence → agent → format → upload (SSE events) |
+| [`agents/security_master.csv`](./agents/security_master.csv) | Seed scrip-name → ISIN master (**replace with Axis's authoritative master**) |
+| [`agents/test_contract_note.py`](./agents/test_contract_note.py) | Offline formatter self-test + `--live <file>` end-to-end test |
+
+**Record spec** (from the customer instructions doc): `H` = 12 fields
+(client, trade date, contract-note no, GST, cess, exchange levy, STT, stamp duty,
+others, trade count, total); `T` = 9 fields (client, contract-note no, `S`/`P`, ISIN,
+qty, rate, brokerage rate, amount). Header total reconciles to the trade amounts plus
+all header charges — verified to the cent against both sample files.
+
+> **Prerequisite:** the running identity needs **Cognitive Services User** on the
+> Document Intelligence account (`docintel-ks`) and **Storage Blob Data Contributor** on
+> `agenticemailks`.
+
+```powershell
+# Validate deterministic formatting (offline):
+python agents/test_contract_note.py
+# Full extract -> map on a real contract note (Document Intelligence + agent):
+python agents/test_contract_note.py --live "<path-to-pdf-or-image>"
+```
+
+---
 ---
 
 ## Live Operations Dashboard (UI) ✅
@@ -222,7 +261,7 @@ real email or reading terminal logs. It also surfaces the **real Logic App run h
 |------|---------|
 | [`dashboard/app.py`](./dashboard/app.py) | FastAPI backend: agent inventory, sample emails, **SSE live-trace** stream (code-driven routing), Logic App run history |
 | [`dashboard/static/index.html`](./dashboard/static/index.html) | Single-page UI (vanilla JS + SSE), Axis Bank visual tone |
-| [`dashboard/requirements.txt`](./dashboard/requirements.txt) | `fastapi`, `uvicorn`, `azure-ai-agents`, `azure-identity` |
+| [`dashboard/requirements.txt`](./dashboard/requirements.txt) | `fastapi`, `uvicorn`, `azure-ai-agents`, `azure-identity`, `azure-storage-blob`, `azure-ai-documentintelligence` |
 
 ### Run it
 

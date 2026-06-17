@@ -250,6 +250,50 @@ def _orchestrate(ag, payload_str: str):
 
     results: list[dict] = []
     target = INTENT_TO_AGENT[intent]
+
+    # Contract notes get the full extract -> map -> ASCII-file -> blob pipeline.
+    if intent == "contract_note":
+        yield _sse({"type": "agent_called", "name": target, "ts": time.time()})
+        agents_called.append(target)
+        try:
+            payload = json.loads(payload_str)
+        except Exception:  # noqa: BLE001
+            payload = {}
+        attachments = payload.get("attachmentBlobs") or []
+        contract_id = name_to_id[target]
+        # Imported lazily: only the contract path needs blob + Document Intelligence.
+        from contract_pipeline import process as _contract_process
+
+        files_written: list = []
+        all_warnings: list = []
+        try:
+            for ev in _contract_process(
+                attachments, lambda c: _run_agent(ag, contract_id, c)
+            ):
+                yield _sse(ev)
+                if ev.get("type") == "contract_done":
+                    files_written = ev.get("files", [])
+                    all_warnings = ev.get("warnings", [])
+        except Exception as exc:  # noqa: BLE001
+            yield _sse({"type": "error", "message": str(exc)[:400]})
+        results.append(
+            {"agent": target, "files": files_written, "warnings": all_warnings}
+        )
+        final = {"intent": intent, "delegated_to": agents_called, "results": results}
+        yield _sse(
+            {
+                "type": "done",
+                "status": "completed",
+                "intent": intent,
+                "agentsCalled": agents_called,
+                "finalMessage": json.dumps(final, indent=2),
+                "error": None,
+                "threadId": orc["threadId"],
+                "ts": time.time(),
+            }
+        )
+        return
+
     yield _sse({"type": "agent_called", "name": target, "ts": time.time()})
     agents_called.append(target)
     spec = _run_agent(ag, name_to_id[target], payload_str)

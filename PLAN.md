@@ -99,7 +99,7 @@ flowchart TD
 | **Phase 1** | **Provision foundation (Bicep)** — Foundry project, model, storage, Doc Intelligence | ✅ Deployed |
 | **Phase 2** | **Email ingestion (Logic Apps, Bicep)** — Outlook trigger, attachments → Blob, call orchestrator | ✅ Deployed |
 | **Phase 3** | **Foundry agents (SDK script)** — orchestrator + 4 specialist agents (Connected Agents) | ✅ Deployed |
-| Phase 4 | Wire actions back — Blob output, human notification | ⬜ Planned |
+| **Phase 4** | **Contract note processing** — attachments → Document Intelligence → `contract-note-ks` → ISIN resolve → pipe-delimited PIS files → `contract-notes-output` | ✅ Built |
 | Phase 5 | Test & verify — 3 test emails, one per branch | ⬜ Planned |
 
 > Deployment approach: **Infrastructure-as-Code**. Control-plane resources (Phases 1–2)
