@@ -162,6 +162,27 @@
   .refresh { font-size:11px; color:var(--maroon); cursor:pointer; background:none; border:none; font-weight:700; }
   .err { font-size:11.5px; color:var(--fail); }
   .footnote { font-size:11px; color:var(--muted); padding:0 18px 14px; }
+
+  /* tabs */
+  .tabs { display:flex; gap:4px; padding: 0 28px; background: linear-gradient(100deg, var(--maroon-deep), var(--maroon) 55%, var(--magenta)); }
+  .tab { border:none; background:rgba(255,255,255,.14); color:#fff; font-weight:700; font-size:13px;
+         padding:10px 20px; border-radius:10px 10px 0 0; cursor:pointer; opacity:.85; }
+  .tab.active { background: var(--bg); color: var(--maroon); opacity:1; }
+
+  /* overview */
+  .ov-cards { display:grid; grid-template-columns: repeat(5, 1fr); gap:14px; margin-bottom:18px; }
+  @media (max-width: 900px){ .ov-cards{ grid-template-columns: repeat(2,1fr);} }
+  .ov-card { background:var(--card); border:1px solid var(--line); border-radius:16px; box-shadow:var(--shadow); padding:16px 18px; }
+  .ov-card .n { font-size:30px; font-weight:800; color:var(--maroon); line-height:1; }
+  .ov-card .l { font-size:11.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; margin-top:6px; }
+  table.ov { width:100%; border-collapse:collapse; font-size:13px; }
+  table.ov th, table.ov td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); }
+  table.ov th { font-size:11px; text-transform:uppercase; letter-spacing:.6px; color:var(--muted); }
+  table.ov td.num { font-weight:700; }
+  .bar { display:inline-block; height:8px; border-radius:6px; vertical-align:middle; }
+  .bar.c { background: var(--maroon); } .bar.o { background: var(--magenta); } .bar.m { background:#c8861a; }
+  .legend { display:flex; gap:16px; font-size:12px; color:var(--muted); margin: 0 0 14px; }
+  .legend i { display:inline-block; width:11px; height:11px; border-radius:3px; margin-right:5px; vertical-align:-1px; }
 </style>
 </head>
 <body>
@@ -175,7 +196,12 @@
     <div class="live-dot"><i></i> Live</div>
   </header>
 
-  <div class="wrap">
+  <nav class="tabs">
+    <button class="tab active" id="tabLive">◷ Live Flow</button>
+    <button class="tab" id="tabOverview">▦ Overview</button>
+  </nav>
+
+  <div class="wrap" id="viewLive">
     <!-- LEFT: trigger + agent inventory -->
     <div style="display:flex; flex-direction:column; gap:18px;">
       <section class="card">
@@ -231,6 +257,24 @@
         <div class="body" id="laRuns"><div class="meta">Loading real email-triggered runs…</div></div>
         <div class="footnote">Click any run to trace its actions in the centre panel.</div>
       </section>
+    </div>
+  </div>
+
+  <div class="wrap" id="viewOverview" style="display:none; grid-template-columns: 1fr; max-width: 1100px;">
+    <div style="display:flex; flex-direction:column;">
+      <div class="ov-cards" id="ovCards"></div>
+      <section class="card">
+        <h2>▦ Emails processed by day <button class="refresh" id="refreshOv" style="margin-left:auto">refresh</button></h2>
+        <div class="body">
+          <div class="legend">
+            <span><i style="background:var(--maroon)"></i>Contract Note</span>
+            <span><i style="background:var(--magenta)"></i>Pre-Onboarding</span>
+            <span><i style="background:#c8861a"></i>Manual / Other</span>
+          </div>
+          <div id="ovTable"><div class="meta">Loading…</div></div>
+        </div>
+      </section>
+      <div class="footnote">Counts every email the orchestrator has processed (live UI runs and real emails), grouped by day and intent.</div>
     </div>
   </div>
 
@@ -478,6 +522,48 @@ async function showLARun(name, status){
 
 $("#runBtn").onclick = run;
 $("#refreshLA").onclick = loadLA;
+
+function switchTab(which){
+  const live = which==="live";
+  $("#viewLive").style.display = live ? "" : "none";
+  $("#viewOverview").style.display = live ? "none" : "";
+  $("#tabLive").classList.toggle("active", live);
+  $("#tabOverview").classList.toggle("active", !live);
+  if(!live) loadOverview();
+}
+$("#tabLive").onclick = ()=>switchTab("live");
+$("#tabOverview").onclick = ()=>switchTab("overview");
+
+async function loadOverview(){
+  try{
+    const r = await fetch("/api/overview"); const d = await r.json();
+    const t = d.totals||{};
+    const cards = [
+      ["Emails processed", t.total||0],
+      ["Contract Notes", t.contract_note||0],
+      ["Pre-Onboarding", t.pre_onboarding||0],
+      ["Manual / Other", t.manual||0],
+      ["Files generated", t.files||0],
+    ];
+    $("#ovCards").innerHTML = cards.map(([l,n])=>`<div class="ov-card"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
+    const days = d.days||[];
+    if(!days.length){ $("#ovTable").innerHTML = `<div class="meta">No emails processed yet. Run a few through the Live Flow tab and they’ll show up here, date-wise.</div>`; return; }
+    const max = Math.max(1, ...days.map(x=>x.total));
+    const seg = (cls,n)=> n? `<span class="bar ${cls}" style="width:${Math.max(6,Math.round(150*n/max))}px" title="${n}"></span>`:"";
+    const rows = days.map(x=>`<tr>
+        <td>${x.date}</td>
+        <td class="num">${x.total}</td>
+        <td class="num">${x.contract_note}</td>
+        <td class="num">${x.pre_onboarding}</td>
+        <td class="num">${x.manual}</td>
+        <td class="num">${x.files}</td>
+        <td>${seg("c",x.contract_note)}${seg("o",x.pre_onboarding)}${seg("m",x.manual)}</td>
+      </tr>`).join("");
+    $("#ovTable").innerHTML = `<table class="ov"><thead><tr><th>Date</th><th>Total</th><th>Contract</th><th>Onboarding</th><th>Manual</th><th>Files</th><th>Mix</th></tr></thead><tbody>${rows}</tbody></table>`;
+  }catch(e){ $("#ovTable").innerHTML = `<div class="err">Could not load overview.</div>`; }
+}
+$("#refreshOv").onclick = loadOverview;
+
 loadSamples(); loadInventory(); loadLA();
 setInterval(loadLA, 20000);   // keep the real-email feed fresh
 </script>

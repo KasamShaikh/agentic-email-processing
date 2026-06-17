@@ -20,10 +20,11 @@ Usage:
 
 import os
 import pathlib
+from typing import List
 
 from azure.identity import DefaultAzureCredential
 from azure.ai.agents import AgentsClient
-from azure.ai.agents.models import CodeInterpreterTool
+from azure.ai.agents.models import CodeInterpreterTool, FunctionTool
 
 ENDPOINT = os.environ.get(
     "PROJECT_ENDPOINT",
@@ -44,6 +45,28 @@ AGENT_NAMES = {
 
 def instructions(name: str) -> str:
     return (HERE / f"{name}.md").read_text(encoding="utf-8")
+
+
+def run_contract_pipeline(attachment_blobs: List[str]) -> str:
+    """Extract, map and convert ALL contract-note attachments on this email into the
+    pipe-delimited PIS upload file(s) — grouped by exchange and Buy/Sale — and upload
+    them to the contract-notes-output container.
+
+    The body of this function is never executed here: it only defines the tool schema
+    advertised to the orchestrator. The dashboard worker (dashboard/app.py) executes the
+    real pipeline (dashboard/contract_pipeline.py) when the agent requests this tool and
+    submits the result back as the tool output.
+
+    :param attachment_blobs: Blob paths of EVERY attachment on the email, e.g.
+        ["incoming-attachments/note1.pdf", "incoming-attachments/note2.png"]. Always pass
+        the COMPLETE list in one call so all notes are combined into the correct grouped
+        files (never one file per attachment).
+    :return: A short summary describing the files written and any warnings.
+    """
+    return ""
+
+
+_contract_pipeline_tool = FunctionTool({run_contract_pipeline})
 
 
 def main() -> None:
@@ -92,11 +115,12 @@ def main() -> None:
     )
     print(f"created pre-onboarding-ks: {pre.id}")
 
-    # --- Orchestrator: pure intent classifier (routing done in code) -------
+    # --- Orchestrator: intent classifier + contract-pipeline tool caller ---
     orchestrator = agents.create_agent(
         model=MODEL,
         name="orchestrator-ks",
         instructions=instructions("orchestrator"),
+        tools=_contract_pipeline_tool.definitions,
     )
     print(f"created orchestrator-ks: {orchestrator.id}")
 
@@ -104,10 +128,8 @@ def main() -> None:
     print("=== Agents created ===")
     print(f"ORCHESTRATOR_AGENT_ID={orchestrator.id}")
     print(
-        "Set this on the Logic App with:\n"
-        "  az deployment group create -g agentic-email-processing "
-        "--template-file infra/phase2.bicep --parameters infra/phase2.bicepparam "
-        f"orchestratorAgentId={orchestrator.id}"
+        "Agents are resolved by name at runtime, so no id needs to be wired anywhere.\n"
+        "The dashboard and Logic App reference 'orchestrator-ks' by name."
     )
 
 

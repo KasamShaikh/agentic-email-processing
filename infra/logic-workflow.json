@@ -6,17 +6,9 @@
       "type": "Object",
       "defaultValue": {}
     },
-    "projectAgentsEndpoint": {
+    "processorEndpoint": {
       "type": "String",
       "defaultValue": ""
-    },
-    "orchestratorAgentName": {
-      "type": "String",
-      "defaultValue": "orchestrator-ks"
-    },
-    "agentsApiVersion": {
-      "type": "String",
-      "defaultValue": "2025-05-01"
     }
   },
   "triggers": {
@@ -111,75 +103,35 @@
         "attachmentBlobs": "@variables('attachmentUrls')"
       }
     },
-    "List_agents": {
-      "type": "Http",
-      "runAfter": {
-        "Compose_payload": [
-          "Succeeded"
-        ]
-      },
-      "inputs": {
-        "method": "GET",
-        "uri": "@{parameters('projectAgentsEndpoint')}/assistants?api-version=@{parameters('agentsApiVersion')}",
-        "authentication": {
-          "type": "ManagedServiceIdentity",
-          "audience": "https://ai.azure.com"
-        }
-      }
-    },
-    "Filter_orchestrator": {
-      "type": "Query",
-      "runAfter": {
-        "List_agents": [
-          "Succeeded"
-        ]
-      },
-      "inputs": {
-        "from": "@coalesce(body('List_agents')?['data'], json('[]'))",
-        "where": "@equals(item()?['name'], parameters('orchestratorAgentName'))"
-      }
-    },
-    "If_orchestrator_found": {
+    "If_processor_configured": {
       "type": "If",
       "runAfter": {
-        "Filter_orchestrator": [
+        "Compose_payload": [
           "Succeeded"
         ]
       },
       "expression": {
         "and": [
           {
-            "greater": [
-              "@length(body('Filter_orchestrator'))",
-              0
-            ]
+            "not": {
+              "equals": [
+                "@parameters('processorEndpoint')",
+                ""
+              ]
+            }
           }
         ]
       },
       "actions": {
-        "Call_orchestrator_agent": {
+        "Call_processor": {
           "type": "Http",
           "inputs": {
             "method": "POST",
-            "uri": "@{parameters('projectAgentsEndpoint')}/threads/runs?api-version=@{parameters('agentsApiVersion')}",
+            "uri": "@parameters('processorEndpoint')",
             "headers": {
               "Content-Type": "application/json"
             },
-            "body": {
-              "assistant_id": "@{first(body('Filter_orchestrator'))?['id']}",
-              "thread": {
-                "messages": [
-                  {
-                    "role": "user",
-                    "content": "@{string(outputs('Compose_payload'))}"
-                  }
-                ]
-              }
-            },
-            "authentication": {
-              "type": "ManagedServiceIdentity",
-              "audience": "https://ai.azure.com"
-            }
+            "body": "@outputs('Compose_payload')"
           }
         }
       },

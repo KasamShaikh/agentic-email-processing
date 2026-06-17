@@ -28,7 +28,7 @@ from pathlib import Path
 
 from azure.identity import DefaultAzureCredential
 from azure.ai.agents import AgentsClient
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -108,6 +108,30 @@ def client() -> AgentsClient:
 
 def _sse(event: dict) -> str:
     return f"data: {json.dumps(event)}\n\n"
+
+
+DATA_DIR = Path(__file__).parent / "data"
+PROCESSED_LOG = DATA_DIR / "processed.jsonl"
+
+
+def _record(intent: str, agents: list, attachments: list, files: list, source: str) -> None:
+    """Append one processed-email record for the Overview tab (best effort)."""
+    try:
+        DATA_DIR.mkdir(exist_ok=True)
+        rec = {
+            "ts": time.time(),
+            "date": time.strftime("%Y-%m-%d"),
+            "intent": intent,
+            "label": INTENT_LABEL.get(intent, intent),
+            "agents": agents,
+            "attachments": len(attachments or []),
+            "files": len(files or []),
+            "source": source,
+        }
+        with PROCESSED_LOG.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec) + "\n")
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _az() -> str | None:
@@ -190,20 +214,57 @@ def _parse_intent(text: str) -> tuple[str, str]:
     return intent, reason
 
 
-def _orchestrate(ag, payload_str: str):
-    """Yield SSE events for: classify intent -> route -> run specialists.
+def _status_str(run) -> str:
+    """Normalise a run status enum/string to a lowercase token."""
+    return str(run.status).split(".")[-1].lower()
 
-    Reused by both the UI simulator (/api/stream) and real Logic App emails
-    (/api/events/stream).
+
+def _run_contract(ag, contract_id: str, blobs: list):
+    """Run the contract pipeline, yield its SSE events, return (files, warnings)."""
+    from contract_pipeline import process as _contract_process
+
+    files_written: list = []
+    all_warnings: list = []
+    try:
+        for ev in _contract_process(blobs, lambda c: _run_agent(ag, contract_id, c)):
+            yield _sse(ev)
+            if ev.get("type") == "contract_done":
+                files_written = ev.get("files", [])
+                all_warnings = ev.get("warnings", [])
+    except Exception as exc:  # noqa: BLE001
+        yield _sse({"type": "error", "message": str(exc)[:400]})
+    return files_written, all_warnings
+
+
+def _orchestrate(ag, payload_str: str, source: str = "ui"):
+    """Yield SSE events for one email: the orchestrator agent classifies the intent
+    and, for contract notes, calls its `run_contract_pipeline` tool — which we execute
+    here (extract -> map -> grouped PIS file -> blob) and feed back to the agent.
+    Pre-onboarding / manual intents stay code-routed to their leaf agents.
+
+    Reused by the UI simulator (/api/stream), real Logic App emails
+    (/api/events/stream) and the headless processor (/api/process).
     """
     id_to_name = _agents_index()
     name_to_id = {n: i for i, n in id_to_name.items()}
     orchestrator_id = name_to_id.get(ORCHESTRATOR_NAME)
+    contract_id = name_to_id.get("contract-note-ks")
     if not orchestrator_id:
         yield _sse({"type": "error", "message": "orchestrator-ks not found"})
         return
 
+    try:
+        payload = json.loads(payload_str)
+    except Exception:  # noqa: BLE001
+        payload = {}
+    payload_attachments = payload.get("attachmentBlobs") or []
+
     agents_called: list[str] = []
+    results: list[dict] = []
+    contract_handled = False
+    files_written: list = []
+    all_warnings: list = []
+
     yield _sse(
         {
             "type": "orchestrator_start",
@@ -213,31 +274,83 @@ def _orchestrate(ag, payload_str: str):
         }
     )
     yield _sse({"type": "status", "status": "running", "ts": time.time()})
-    orc = _run_agent(ag, orchestrator_id, payload_str)
+
+    # --- Agentic run: the orchestrator decides. If it calls run_contract_pipeline,
+    #     we execute the real pipeline here and submit the summary back. -----------
+    thread = ag.threads.create()
+    ag.messages.create(thread_id=thread.id, role="user", content=payload_str)
+    run = ag.runs.create(thread_id=thread.id, agent_id=orchestrator_id)
     yield _sse(
         {
             "type": "run_created",
-            "threadId": orc["threadId"],
-            "runId": orc["runId"],
-            "status": orc["status"],
+            "threadId": thread.id,
+            "runId": run.id,
+            "status": _status_str(run),
             "ts": time.time(),
         }
     )
-    if orc["status"] != "completed":
+
+    deadline = time.time() + 180
+    while _status_str(run) in ("queued", "in_progress", "requires_action") and time.time() < deadline:
+        if _status_str(run) == "requires_action":
+            ra = getattr(run, "required_action", None)
+            tool_calls = getattr(getattr(ra, "submit_tool_outputs", None), "tool_calls", []) or []
+            outputs = []
+            for tc in tool_calls:
+                fname = tc.function.name
+                if fname == "run_contract_pipeline":
+                    try:
+                        args = json.loads(tc.function.arguments or "{}")
+                    except Exception:  # noqa: BLE001
+                        args = {}
+                    blobs = (
+                        args.get("attachment_blobs")
+                        or args.get("attachmentBlobs")
+                        or payload_attachments
+                    )
+                    yield _sse({"type": "agent_called", "name": "contract-note-ks", "ts": time.time()})
+                    if "contract-note-ks" not in agents_called:
+                        agents_called.append("contract-note-ks")
+                    fw, ww = yield from _run_contract(ag, contract_id, blobs)
+                    files_written, all_warnings = fw, ww
+                    contract_handled = True
+                    names = ", ".join(
+                        f.get("file", "") if isinstance(f, dict) else str(f) for f in fw
+                    )
+                    summary = f"Wrote {len(fw)} file(s){': ' + names if names else ''}."
+                    if ww:
+                        summary += f" {len(ww)} warning(s)."
+                    outputs.append({"tool_call_id": tc.id, "output": summary})
+                else:
+                    outputs.append({"tool_call_id": tc.id, "output": "unsupported tool"})
+            run = ag.runs.submit_tool_outputs(
+                thread_id=thread.id, run_id=run.id, tool_outputs=outputs
+            )
+        else:
+            time.sleep(0.7)
+            run = ag.runs.get(thread_id=thread.id, run_id=run.id)
+
+    status = _status_str(run)
+    err = None
+    if getattr(run, "last_error", None):
+        le = run.last_error
+        err = le.as_dict() if hasattr(le, "as_dict") else str(le)
+
+    if status != "completed":
         yield _sse(
             {
                 "type": "done",
-                "status": orc["status"],
-                "agentsCalled": [],
+                "status": status,
+                "agentsCalled": agents_called,
                 "finalMessage": "",
-                "error": orc["error"],
-                "threadId": orc["threadId"],
+                "error": err,
+                "threadId": thread.id,
                 "ts": time.time(),
             }
         )
         return
 
-    intent, reason = _parse_intent(orc["text"])
+    intent, reason = _parse_intent(_agent_reply(ag, thread.id))
     yield _sse(
         {
             "type": "intent",
@@ -248,38 +361,22 @@ def _orchestrate(ag, payload_str: str):
         }
     )
 
-    results: list[dict] = []
-    target = INTENT_TO_AGENT[intent]
+    target = INTENT_TO_AGENT.get(intent, "manual-intervention-ks")
 
-    # Contract notes get the full extract -> map -> ASCII-file -> blob pipeline.
+    # Contract notes are handled by the agent's tool call above. If the model
+    # classified contract_note but didn't call the tool, run the pipeline in code.
     if intent == "contract_note":
-        yield _sse({"type": "agent_called", "name": target, "ts": time.time()})
-        agents_called.append(target)
-        try:
-            payload = json.loads(payload_str)
-        except Exception:  # noqa: BLE001
-            payload = {}
-        attachments = payload.get("attachmentBlobs") or []
-        contract_id = name_to_id[target]
-        # Imported lazily: only the contract path needs blob + Document Intelligence.
-        from contract_pipeline import process as _contract_process
-
-        files_written: list = []
-        all_warnings: list = []
-        try:
-            for ev in _contract_process(
-                attachments, lambda c: _run_agent(ag, contract_id, c)
-            ):
-                yield _sse(ev)
-                if ev.get("type") == "contract_done":
-                    files_written = ev.get("files", [])
-                    all_warnings = ev.get("warnings", [])
-        except Exception as exc:  # noqa: BLE001
-            yield _sse({"type": "error", "message": str(exc)[:400]})
+        if not contract_handled:
+            yield _sse({"type": "agent_called", "name": "contract-note-ks", "ts": time.time()})
+            if "contract-note-ks" not in agents_called:
+                agents_called.append("contract-note-ks")
+            fw, ww = yield from _run_contract(ag, contract_id, payload_attachments)
+            files_written, all_warnings = fw, ww
         results.append(
-            {"agent": target, "files": files_written, "warnings": all_warnings}
+            {"agent": "contract-note-ks", "files": files_written, "warnings": all_warnings}
         )
         final = {"intent": intent, "delegated_to": agents_called, "results": results}
+        _record(intent, agents_called, payload_attachments, files_written, source)
         yield _sse(
             {
                 "type": "done",
@@ -288,12 +385,13 @@ def _orchestrate(ag, payload_str: str):
                 "agentsCalled": agents_called,
                 "finalMessage": json.dumps(final, indent=2),
                 "error": None,
-                "threadId": orc["threadId"],
+                "threadId": thread.id,
                 "ts": time.time(),
             }
         )
         return
 
+    # pre_onboarding / manual: code-routed leaf agents.
     yield _sse({"type": "agent_called", "name": target, "ts": time.time()})
     agents_called.append(target)
     spec = _run_agent(ag, name_to_id[target], payload_str)
@@ -327,6 +425,7 @@ def _orchestrate(ag, payload_str: str):
         results.append({"agent": fv, "result": fvr["text"]})
 
     final = {"intent": intent, "delegated_to": agents_called, "results": results}
+    _record(intent, agents_called, payload_attachments, [], source)
     yield _sse(
         {
             "type": "done",
@@ -335,10 +434,11 @@ def _orchestrate(ag, payload_str: str):
             "agentsCalled": agents_called,
             "finalMessage": json.dumps(final, indent=2),
             "error": None,
-            "threadId": orc["threadId"],
+            "threadId": thread.id,
             "ts": time.time(),
         }
     )
+
 
 
 def _sub() -> str | None:
@@ -641,7 +741,7 @@ def api_stream(
         )
 
         try:
-            yield from _orchestrate(client(), json.dumps(payload))
+            yield from _orchestrate(client(), json.dumps(payload), source="ui")
         except Exception as exc:  # noqa: BLE001
             yield _sse({"type": "error", "message": str(exc)[:400]})
 
@@ -684,11 +784,95 @@ def api_events_stream(run: str = Query(...)):
         )
 
         try:
-            yield from _orchestrate(client(), json.dumps(payload))
+            yield from _orchestrate(client(), json.dumps(payload), source="logicapp")
         except Exception as exc:  # noqa: BLE001
             yield _sse({"type": "error", "message": str(exc)[:400]})
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@app.get("/api/overview")
+def api_overview(days: int = Query(14)):
+    """Date-wise counts of processed emails by intent (for the Overview tab)."""
+    rows: list[dict] = []
+    try:
+        if PROCESSED_LOG.exists():
+            for line in PROCESSED_LOG.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rows.append(json.loads(line))
+                except Exception:  # noqa: BLE001
+                    pass
+    except Exception:  # noqa: BLE001
+        pass
+
+    intents = ["contract_note", "pre_onboarding", "manual"]
+    by_date: dict[str, dict] = {}
+    for r in rows:
+        d = r.get("date") or ""
+        bucket = by_date.setdefault(
+            d,
+            {"date": d, "total": 0, "files": 0, "contract_note": 0, "pre_onboarding": 0, "manual": 0},
+        )
+        it = r.get("intent")
+        if it not in intents:
+            it = "manual"
+        bucket[it] += 1
+        bucket["total"] += 1
+        bucket["files"] += int(r.get("files") or 0)
+
+    days_list = sorted(by_date.values(), key=lambda x: x["date"], reverse=True)[:days]
+    totals = {
+        "total": sum(b["total"] for b in by_date.values()),
+        "files": sum(b["files"] for b in by_date.values()),
+        "contract_note": sum(b["contract_note"] for b in by_date.values()),
+        "pre_onboarding": sum(b["pre_onboarding"] for b in by_date.values()),
+        "manual": sum(b["manual"] for b in by_date.values()),
+    }
+    return {"days": days_list, "totals": totals, "labels": INTENT_LABEL}
+
+
+@app.post("/api/process")
+async def api_process(request: Request):
+    """Headless entrypoint (Design A): accept an email's attachment list + metadata,
+    run the agentic orchestration to completion, and return a JSON summary. This is
+    what a hosted deployment's Logic App posts to for fully-automatic processing."""
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    payload = {
+        "subject": body.get("subject") or "(no subject)",
+        "from": body.get("from") or "",
+        "bodyPreview": _clean_text(body.get("bodyPreview") or "", 600),
+        "body": _clean_text(body.get("body") or body.get("bodyPreview") or "", 4000),
+        "attachmentBlobs": body.get("attachmentBlobs") or body.get("attachment_blobs") or [],
+    }
+    intent = None
+    files: list = []
+    status = "completed"
+    error = None
+    try:
+        for chunk in _orchestrate(client(), json.dumps(payload), source="logicapp"):
+            try:
+                ev = json.loads(chunk[6:].strip())
+            except Exception:  # noqa: BLE001
+                continue
+            t = ev.get("type")
+            if t == "intent":
+                intent = ev.get("intent")
+            elif t == "output_written":
+                files.append(ev.get("file"))
+            elif t == "done":
+                status = ev.get("status")
+                error = ev.get("error")
+            elif t == "error":
+                error = ev.get("message")
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"status": "failed", "error": str(exc)[:400]}, status_code=500)
+    return {"intent": intent, "filesWritten": files, "status": status, "error": error}
 
 
 # --------------------------------------------------------------------------- #

@@ -16,11 +16,8 @@ param office365ConnectionName string = 'office365-ks'
 @description('Azure Blob Storage API connection name.')
 param blobConnectionName string = 'azureblob-ks'
 
-@description('Foundry project data-plane endpoint used to call the orchestrator agent.')
-param projectAgentsEndpoint string = 'https://agentic-email-foundry-ks.services.ai.azure.com/api/projects/email-agentic-ks'
-
-@description('Name of the orchestrator agent. The workflow resolves its id at runtime, so it survives agent re-creation.')
-param orchestratorAgentName string = 'orchestrator-ks'
+@description('HTTPS endpoint of the hosted email processor (dashboard /api/process). When empty, the Logic App only ingests attachments and does not call the agentic pipeline.')
+param processorEndpoint string = ''
 
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
   name: storageAccountName
@@ -76,11 +73,8 @@ resource workflow 'Microsoft.Logic/workflows@2019-05-01' = {
           }
         }
       }
-      projectAgentsEndpoint: {
-        value: projectAgentsEndpoint
-      }
-      orchestratorAgentName: {
-        value: orchestratorAgentName
+      processorEndpoint: {
+        value: processorEndpoint
       }
     }
   }
