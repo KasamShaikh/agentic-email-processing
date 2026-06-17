@@ -197,7 +197,7 @@
 
     <!-- CENTER: live trace -->
     <section class="card">
-      <h2>◷ Live run trace</h2>
+      <h2>◷ Observability</h2>
       <div class="status-strip">
         <span class="pill idle" id="statusPill">idle</span>
         <span class="meta" id="statusMeta">Pick a sample and run it to watch the flow in real time.</span>
@@ -216,12 +216,12 @@
           <div class="flow" id="flow">
             <div class="node" data-node="email"><div class="ic">✉</div><div><div class="nm">Email received</div><div class="sub">Office 365 inbox</div></div></div>
             <div class="connector"></div>
-            <div class="node" data-node="orchestrator-ks"><div class="ic">◎</div><div><div class="nm">Orchestrator</div><div class="sub">classifies intent</div></div><span class="chip">idle</span></div>
+            <div class="node" data-node="orchestrator-ks"><div class="ic">◎</div><div><div class="nm">Orchestrator Agent</div><div class="sub">classifies intent</div></div><span class="chip">idle</span></div>
             <div class="connector"></div>
-            <div class="node" data-node="contract-note-ks"><div class="ic">▤</div><div><div class="nm">Contract Note</div><div class="sub">extract & standardise</div></div><span class="chip">idle</span></div>
-            <div class="node" data-node="pre-onboarding-ks"><div class="ic">◍</div><div><div class="nm">Pre-Onboarding</div><div class="sub">verify merchant docs</div></div><span class="chip">idle</span></div>
-            <div class="node indent" data-node="form-verification-ks"><div class="ic">✓</div><div><div class="nm">Form Verification</div><div class="sub">validate fields</div></div><span class="chip">idle</span></div>
-            <div class="node" data-node="manual-intervention-ks"><div class="ic">☎</div><div><div class="nm">Manual Intervention</div><div class="sub">route to human</div></div><span class="chip">idle</span></div>
+            <div class="node" data-node="contract-note-ks"><div class="ic">▤</div><div><div class="nm">Contract Note Agent</div><div class="sub">extract & standardise</div></div><span class="chip">idle</span></div>
+            <div class="node" data-node="pre-onboarding-ks"><div class="ic">◍</div><div><div class="nm">Pre-Onboarding Agent</div><div class="sub">verify merchant docs</div></div><span class="chip">idle</span></div>
+            <div class="node indent" data-node="form-verification-ks"><div class="ic">✓</div><div><div class="nm">Form Verification Agent</div><div class="sub">validate fields</div></div><span class="chip">idle</span></div>
+            <div class="node" data-node="manual-intervention-ks"><div class="ic">☎</div><div><div class="nm">Manual Intervention Agent</div><div class="sub">route to human</div></div><span class="chip">idle</span></div>
           </div>
         </div>
       </section>
@@ -367,10 +367,19 @@ async function loadInventory(){
   try{
     const r = await fetch("/api/agents"); const d = await r.json();
     const box = $("#inventory"); box.innerHTML = "";
+    const agentDesc = {
+      "orchestrator-ks": "Reads each incoming email and classifies its intent, then routes it to the right specialist agent.",
+      "contract-note-ks": "Extracts and standardises trade / contract-note details from the email and its attachments.",
+      "pre-onboarding-ks": "Verifies merchant pre-onboarding documents and extracts KYC, registration and bank details.",
+      "form-verification-ks": "Validates the extracted onboarding fields for completeness and correctness.",
+      "manual-intervention-ks": "Flags emails that need a human and routes them for manual handling."
+    };
     d.agents.sort((a,b)=> a.name==="orchestrator-ks"?-1:1).forEach(a=>{
       const tools = a.connected.length? `connects → ${a.connected.join(", ")}` : (a.tools.length? a.tools.join(", ") : "no tools");
       const el = document.createElement("div");
       el.className = "la-run";
+      el.style.cursor = "help";
+      el.title = agentDesc[a.name] || "Foundry agent";
       el.innerHTML = `<span class="s Succeeded"></span><div><div class="t">${a.name}</div><div class="meta mono">${a.model} · ${tools}</div></div>`;
       box.appendChild(el);
     });
