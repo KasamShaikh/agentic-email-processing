@@ -62,12 +62,12 @@ INTENT_LABEL = {
 
 SAMPLES = {
     "contract": {
-        "subject": "Contract Note - Trade Confirmation 17-Jun-2026",
+        "subject": "Contract Note - Trade Confirmation 27-May-2026",
         "from": "broker@brokerage.example.com",
         "bodyPreview": "Please find attached your contract note for the trade executed today.",
-        "body": "Dear Client, please find attached the contract note for your trade "
-        "(ISIN INE002A01018, 100 shares). Regards, Broker Ops.",
-        "attachmentBlobs": ["incoming-attachments/contract-note-cn123.pdf"],
+        "body": "Dear Client, please find attached the contract note for your trades. "
+        "Regards, Broker Ops.",
+        "attachmentBlobs": ["incoming-attachments/AU_C3320_27052026_1192284.png"],
     },
     "onboarding": {
         "subject": "Merchant pre-onboarding documents for ACME Traders",
