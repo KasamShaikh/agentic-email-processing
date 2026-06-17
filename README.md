@@ -138,7 +138,7 @@ account/project so it can call the orchestrator agent.
 
 ---
 
-## Phase 3 — Foundry agents (Connected Agents) ✅ Deployed
+## Phase 3 — Foundry agents (intent classifier + leaf specialists) ✅ Deployed
 
 Foundry agents are **data-plane** objects (they live inside the project, not in ARM),
 so they **cannot** be expressed in Bicep. The IaC equivalent is a versioned script that
@@ -146,28 +146,40 @@ reads instruction files and (re)creates the agents idempotently.
 
 | File | Purpose |
 |------|---------|
-| [`agents/deploy_agents.py`](./agents/deploy_agents.py) | Creates the 5 agents and wires the Connected Agents graph |
+| [`agents/deploy_agents.py`](./agents/deploy_agents.py) | Creates the 5 agents (idempotent) — orchestrator classifier + 4 leaf specialists |
 | [`agents/requirements.txt`](./agents/requirements.txt) | `azure-ai-agents`, `azure-identity` |
-| [`agents/orchestrator.md`](./agents/orchestrator.md) | Orchestrator instructions (intent + routing) |
+| [`agents/orchestrator.md`](./agents/orchestrator.md) | Orchestrator instructions (intent classification only) |
 | [`agents/contract_note.md`](./agents/contract_note.md) | Contract Note Upload agent |
 | [`agents/pre_onboarding.md`](./agents/pre_onboarding.md) | Merchant Pre-Onboarding agent |
 | [`agents/form_verification.md`](./agents/form_verification.md) | Foundry Form Verification agent |
 | [`agents/manual.md`](./agents/manual.md) | Manual Intervention agent |
 
-### Agent graph (Connected Agents)
+### Agent graph (intent classifier + code-driven routing)
 
 ```mermaid
 flowchart TD
-    O[orchestrator-ks] -->|contract_note| C[contract-note-ks]
+    E[✉ Email payload] --> O[orchestrator-ks<br/>intent classifier]
+    O -->|contract_note| C[contract-note-ks]
     O -->|pre_onboarding| P[pre-onboarding-ks]
     O -->|manual| M[manual-intervention-ks]
-    P -->|form_verification| F[form-verification-ks]
+    P --> F[form-verification-ks]
 ```
 
-The orchestrator classifies intent (`contract_note | pre_onboarding | manual`) and
-delegates to the matching connected agent. `pre-onboarding-ks` further delegates field
-validation to `form-verification-ks`. `contract-note-ks` and `form-verification-ks`
-have the **Code Interpreter** tool for formatting/validation.
+The orchestrator is a **pure intent classifier** — it returns
+`{ "intent": "contract_note | pre_onboarding | manual", "reason": "…" }` and calls no
+tools. The **routing/delegation is performed in code** (see the dashboard and
+[`agents/test_orchestrator.py`](./agents/test_orchestrator.py)): the matching specialist
+is invoked, and for onboarding the extracted fields are chained into
+`form-verification-ks`. All five agents are **leaves**.
+
+> **Why not the Foundry “Connected Agents (classic)” tool?** It fails server-side on
+> this Agents Service endpoint/model (generic `server_error`, no run steps) and is
+> superseded by the `2025-11-15-preview` workflows feature. Code-driven routing keeps
+> every hop reliable and fully traceable.
+
+`contract-note-ks` and `form-verification-ks` have the **Code Interpreter** tool for
+formatting/validation; `orchestrator-ks`, `pre-onboarding-ks` and
+`manual-intervention-ks` have no tools.
 
 ### Prerequisites
 
@@ -195,6 +207,58 @@ az deployment group create `
   --template-file infra/phase2.bicep `
   --parameters infra/phase2.bicepparam orchestratorAgentId=<asst_...>
 ```
+
+---
+---
+
+## Live Operations Dashboard (UI) ✅
+
+A lightweight, single-screen dashboard that visualises the **whole flow in real time**
+— email received → orchestrator classifies intent → which specialist agent fired →
+per-agent output → final result — so you can test and observe routing without sending a
+real email or reading terminal logs. It also surfaces the **real Logic App run history**.
+
+| File | Purpose |
+|------|---------|
+| [`dashboard/app.py`](./dashboard/app.py) | FastAPI backend: agent inventory, sample emails, **SSE live-trace** stream (code-driven routing), Logic App run history |
+| [`dashboard/static/index.html`](./dashboard/static/index.html) | Single-page UI (vanilla JS + SSE), Axis Bank visual tone |
+| [`dashboard/requirements.txt`](./dashboard/requirements.txt) | `fastapi`, `uvicorn`, `azure-ai-agents`, `azure-identity` |
+
+### Run it
+
+```powershell
+az login                                   # data-plane auth (Cognitive Services User)
+pip install -r dashboard/requirements.txt
+python -m uvicorn app:app --port 8000 --app-dir dashboard
+# then open http://localhost:8000
+```
+
+### What's on screen
+
+- **Simulate an email** (left) — pick a built-in sample (Contract Note / Merchant
+  Pre-Onboarding / Manual) or paste a custom email body, then **Run through the flow**.
+- **Live run trace** (centre) — a streaming timeline (Server-Sent Events): 📧 email
+  received → ◎ orchestrator invoked → ◆ intent classified → → routed-to-specialist →
+  △ each agent's actual output → ✔ final JSON summary. A status pill animates
+  idle → running → completed / failed.
+- **Routing map** (right) — the orchestrator → specialists flow diagram whose nodes
+  **light up** as each agent fires.
+- **Agent inventory** (left) and **Logic App runs** (right) — live from Foundry and the
+  real Logic App run history (via `az rest`).
+
+### API endpoints
+
+| Endpoint | Returns |
+|----------|---------|
+| `GET /api/agents` | Agent inventory (name, model, tools) |
+| `GET /api/samples` | Built-in sample email subjects |
+| `GET /api/stream?sample=contract\|onboarding\|manual` | **SSE** live trace of one run (also accepts `?text=<custom body>`) |
+| `GET /api/logicapp/runs` | Recent real Logic App runs (status + timestamps) |
+
+### Security
+
+No secrets or subscription IDs are written to disk — the subscription is read at request
+time from `az account show`, and auth uses your `az login` identity.
 
 ---
 
