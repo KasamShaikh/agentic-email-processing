@@ -67,23 +67,18 @@
       "foreach": "@coalesce(triggerBody()?['attachments'], json('[]'))",
       "actions": {
         "Create_blob": {
-          "type": "ApiConnection",
+          "type": "Http",
           "inputs": {
-            "host": {
-              "connection": {
-                "name": "@parameters('$connections')['azureblob']['connectionId']"
-              }
-            },
-            "method": "post",
-            "body": "@base64ToBinary(item()?['contentBytes'])",
+            "method": "PUT",
+            "uri": "https://agenticemailks.blob.core.windows.net/incoming-attachments/@{encodeURIComponent(item()?['name'])}",
             "headers": {
-              "ReadFileMetadataFromServer": true
+              "x-ms-blob-type": "BlockBlob",
+              "x-ms-version": "2021-08-06"
             },
-            "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('agenticemailks'))}/files",
-            "queries": {
-              "folderPath": "/incoming-attachments",
-              "name": "@item()?['name']",
-              "queryParametersSingleEncoded": true
+            "body": "@base64ToBinary(item()?['contentBytes'])",
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "audience": "https://storage.azure.com"
             }
           }
         },
@@ -96,7 +91,7 @@
           },
           "inputs": {
             "name": "attachmentUrls",
-            "value": "@body('Create_blob')?['Path']"
+            "value": "incoming-attachments/@{item()?['name']}"
           }
         }
       }
