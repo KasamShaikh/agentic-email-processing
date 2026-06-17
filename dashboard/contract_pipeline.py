@@ -26,7 +26,7 @@ from azure.identity import DefaultAzureCredential
 
 from contract_format import (
     ContractNote,
-    group_and_format,
+    combine_and_format,
     load_security_master,
     note_from_dict,
 )
@@ -176,7 +176,7 @@ def process(
             warnings.append(f"{name}: {type(exc).__name__}: {str(exc)[:200]}")
             yield {"type": "attachment_error", "name": name, "error": str(exc)[:200], "ts": time.time()}
 
-    files, group_warnings = group_and_format(notes)
+    files, group_warnings = combine_and_format(notes)
     warnings.extend(group_warnings)
 
     written = []

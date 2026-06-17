@@ -262,6 +262,32 @@ def group_and_format(notes: list[ContractNote]) -> tuple[dict[str, str], list[st
     return files, warnings
 
 
+def combine_and_format(notes: list[ContractNote]) -> tuple[dict[str, str], list[str]]:
+    """All notes from one email (any number of attachments) -> ONE PIS file.
+
+    The PIS ASCII format is a flat sequence of `H` ... `T` ... blocks, so multiple
+    contract notes (and both Purchase and Sales rows) live in a single file. This
+    keeps one email = one output file, regardless of how many attachments it had.
+    Returns ({filename: text}, warnings).
+    """
+    if not notes:
+        return {}, []
+    warnings: list[str] = []
+    exchanges = sorted({n.exchange.upper() for n in notes if n.exchange})
+    if len(exchanges) > 1:
+        warnings.append(
+            "Email has contract notes from multiple exchanges "
+            f"({', '.join(exchanges)}); combined into a single file."
+        )
+    ex = exchanges[0] if len(exchanges) == 1 else "MULTI"
+    trade_date = next((n.trade_date for n in notes if n.trade_date), "") or "UNDATED"
+    note_no = next((n.contract_note_no for n in notes if n.contract_note_no), "")
+    suffix = re.sub(r"[^A-Za-z0-9]+", "", note_no)[:12]
+    fname = f"{ex}_{trade_date}{('_' + suffix) if suffix else ''}.txt"
+    text = "\n".join(format_note(n) for n in notes) + "\n"
+    return {fname: text}, warnings
+
+
 # --------------------------------------------------------------------------- #
 # Build notes from the agent's JSON, resolving ISINs
 # --------------------------------------------------------------------------- #

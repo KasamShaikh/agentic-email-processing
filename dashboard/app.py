@@ -19,11 +19,14 @@ to disk — the subscription id is read live from `az account show`.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 from azure.identity import DefaultAzureCredential
@@ -163,6 +166,135 @@ def _load_trace(run_name: str) -> dict | None:
     except Exception:  # noqa: BLE001
         pass
     return None
+
+
+def _list_logicapp_runs(top: int = 10) -> list[dict]:
+    """Recent Logic App runs as [{name, status, startTime, endTime}], or []."""
+    az = _az()
+    sub = _sub()
+    if not az or not sub:
+        return []
+    url = (
+        f"https://management.azure.com/subscriptions/{sub}/resourceGroups/"
+        f"{RESOURCE_GROUP}/providers/Microsoft.Logic/workflows/{LOGIC_APP_NAME}/"
+        "runs?api-version=2016-06-01"
+    )
+    res = subprocess.run(
+        [az, "rest", "--method", "get", "--url", url],
+        capture_output=True, text=True, timeout=60, shell=False,
+    )
+    if res.returncode != 0:
+        return []
+    runs = []
+    for r in json.loads(res.stdout or "{}").get("value", [])[:top]:
+        p = r.get("properties", {})
+        runs.append(
+            {
+                "name": r.get("name"),
+                "status": p.get("status"),
+                "startTime": p.get("startTime"),
+                "endTime": p.get("endTime"),
+            }
+        )
+    return runs
+
+
+def _iter_process_run(run_name: str):
+    """Reconstruct a real email from a Logic App run and process it end-to-end,
+    yielding SSE chunks and saving the full trace to disk. Shared by the live
+    stream endpoint and the auto-processing poller."""
+    collected: list = []
+    payload = _reconstruct_email_from_run(run_name)
+    if not payload:
+        yield _sse(
+            {
+                "type": "error",
+                "message": "Could not read this email from the Logic App run outputs.",
+            }
+        )
+        return
+
+    att_display = [
+        (a.get("name") if isinstance(a, dict) else a)
+        for a in payload.get("attachments", [])
+    ] or payload.get("attachmentBlobs", [])
+    email_ev = {
+        "type": "email",
+        "subject": payload.get("subject"),
+        "from": payload.get("from"),
+        "body": payload.get("body") or payload.get("bodyPreview"),
+        "attachments": att_display,
+        "source": "logicapp",
+        "runName": run_name,
+        "ts": time.time(),
+    }
+    collected.append(email_ev)
+    yield _sse(email_ev)
+
+    try:
+        for chunk in _orchestrate(client(), json.dumps(payload), source="logicapp"):
+            try:
+                collected.append(json.loads(chunk[6:].strip()))
+            except Exception:  # noqa: BLE001
+                pass
+            yield chunk
+    except Exception as exc:  # noqa: BLE001
+        yield _sse({"type": "error", "message": str(exc)[:400]})
+    finally:
+        _save_trace(run_name, collected)
+
+
+# --------------------------------------------------------------------------- #
+# Auto-processing poller — makes real emails flow end-to-end with no UI click.
+# A new Logic App run (an email arrived + attachments ingested) is picked up and
+# processed through the agents automatically. Disable with AUTO_PROCESS=0.
+# --------------------------------------------------------------------------- #
+AUTO_PROCESS = os.getenv("AUTO_PROCESS", "1").lower() not in ("0", "false", "no")
+POLL_INTERVAL = int(os.getenv("AUTO_PROCESS_INTERVAL", "20"))
+_poller_started_at = time.time()
+
+
+def _iso_to_epoch(s: str) -> float:
+    s = (s or "").replace("Z", "+00:00")
+    # Logic App timestamps carry 7-digit fractional seconds; fromisoformat wants <=6.
+    m = re.match(r"(.*\.\d{6})\d*([+-]\d{2}:\d{2})?$", s)
+    if m:
+        s = m.group(1) + (m.group(2) or "")
+    try:
+        return datetime.fromisoformat(s).timestamp()
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+def _autoprocess_run(run_name: str) -> None:
+    """Process one run end-to-end (consume the shared generator)."""
+    for _ in _iter_process_run(run_name):
+        pass
+
+
+def _poller_loop() -> None:
+    """Background loop: auto-process new, successful Logic App runs once each."""
+    while True:
+        try:
+            for run in _list_logicapp_runs(10):
+                if run.get("status") != "Succeeded":
+                    continue
+                # Only emails that arrived after the dashboard started, so we don't
+                # reprocess history; each run is processed at most once (trace guard).
+                if _iso_to_epoch(run.get("startTime")) < _poller_started_at:
+                    continue
+                if _load_trace(run["name"]):
+                    continue
+                _autoprocess_run(run["name"])
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(POLL_INTERVAL)
+
+
+@app.on_event("startup")
+def _start_poller() -> None:
+    if AUTO_PROCESS:
+        threading.Thread(target=_poller_loop, name="autoprocess", daemon=True).start()
 
 
 def _az() -> str | None:
@@ -621,42 +753,9 @@ def api_logicapp_runs():
         az = _az()
         if not az:
             return JSONResponse({"runs": [], "error": "Azure CLI (az) not found on PATH."})
-        sub = subprocess.run(
-            [az, "account", "show", "--query", "id", "-o", "tsv"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            shell=False,
-        ).stdout.strip()
-        if not sub:
+        if not _sub():
             return JSONResponse({"runs": [], "error": "Not logged in (az login)."})
-        url = (
-            f"https://management.azure.com/subscriptions/{sub}/resourceGroups/"
-            f"{RESOURCE_GROUP}/providers/Microsoft.Logic/workflows/{LOGIC_APP_NAME}/"
-            "runs?api-version=2016-06-01"
-        )
-        res = subprocess.run(
-            [az, "rest", "--method", "get", "--url", url],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            shell=False,
-        )
-        if res.returncode != 0:
-            return JSONResponse({"runs": [], "error": res.stderr.strip()[:300]})
-        data = json.loads(res.stdout or "{}")
-        runs = []
-        for r in data.get("value", [])[:10]:
-            p = r.get("properties", {})
-            runs.append(
-                {
-                    "name": r.get("name"),
-                    "status": p.get("status"),
-                    "startTime": p.get("startTime"),
-                    "endTime": p.get("endTime"),
-                }
-            )
-        return {"runs": runs}
+        return {"runs": _list_logicapp_runs(10)}
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"runs": [], "error": str(exc)[:300]})
 
@@ -802,50 +901,7 @@ def api_events_stream(run: str = Query(...)):
     from a Logic App run's outputs (no workflow change, any attachment format)."""
     if not re.fullmatch(r"[A-Za-z0-9]+", run or ""):
         return JSONResponse({"error": "invalid run name"}, status_code=400)
-
-    def gen():
-        collected: list = []
-        payload = _reconstruct_email_from_run(run)
-        if not payload:
-            yield _sse(
-                {
-                    "type": "error",
-                    "message": "Could not read this email from the Logic App run outputs.",
-                }
-            )
-            return
-
-        att_display = [
-            (a.get("name") if isinstance(a, dict) else a)
-            for a in payload.get("attachments", [])
-        ] or payload.get("attachmentBlobs", [])
-        email_ev = {
-            "type": "email",
-            "subject": payload.get("subject"),
-            "from": payload.get("from"),
-            "body": payload.get("body") or payload.get("bodyPreview"),
-            "attachments": att_display,
-            "source": "logicapp",
-            "runName": run,
-            "ts": time.time(),
-        }
-        collected.append(email_ev)
-        yield _sse(email_ev)
-
-        try:
-            for chunk in _orchestrate(client(), json.dumps(payload), source="logicapp"):
-                try:
-                    collected.append(json.loads(chunk[6:].strip()))
-                except Exception:  # noqa: BLE001
-                    pass
-                yield chunk
-        except Exception as exc:  # noqa: BLE001
-            yield _sse({"type": "error", "message": str(exc)[:400]})
-        finally:
-            # Save the end-to-end trace so this run can be viewed from logs later.
-            _save_trace(run, collected)
-
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return StreamingResponse(_iter_process_run(run), media_type="text/event-stream")
 
 
 @app.get("/api/overview")
