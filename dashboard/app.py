@@ -23,6 +23,7 @@ import re
 import shutil
 import subprocess
 import time
+import urllib.request
 from pathlib import Path
 
 from azure.identity import DefaultAzureCredential
@@ -267,17 +268,102 @@ def api_logicapp_runs():
         return JSONResponse({"runs": [], "error": str(exc)[:300]})
 
 
+@app.get("/api/logicapp/runs/{run_name}/actions")
+def api_logicapp_run_actions(run_name: str):
+    """Action-level trace of one real Logic App run (the actual email flow)."""
+    if not re.fullmatch(r"[A-Za-z0-9]+", run_name or ""):
+        return JSONResponse({"error": "invalid run name"}, status_code=400)
+    try:
+        az = _az()
+        if not az:
+            return JSONResponse({"error": "Azure CLI (az) not found on PATH."})
+        sub = subprocess.run(
+            [az, "account", "show", "--query", "id", "-o", "tsv"],
+            capture_output=True, text=True, timeout=30, shell=False,
+        ).stdout.strip()
+        if not sub:
+            return JSONResponse({"error": "Not logged in (az login)."})
+        base = (
+            f"https://management.azure.com/subscriptions/{sub}/resourceGroups/"
+            f"{RESOURCE_GROUP}/providers/Microsoft.Logic/workflows/{LOGIC_APP_NAME}/"
+            f"runs/{run_name}"
+        )
+        run_res = subprocess.run(
+            [az, "rest", "--method", "get", "--url", f"{base}?api-version=2016-06-01"],
+            capture_output=True, text=True, timeout=60, shell=False,
+        )
+        if run_res.returncode != 0:
+            return JSONResponse({"error": run_res.stderr.strip()[:300]})
+        run = json.loads(run_res.stdout or "{}").get("properties", {})
+        trig = run.get("trigger", {})
+
+        # best-effort: read the trigger outputs to surface the email subject/from
+        email = {}
+        try:
+            link = (trig.get("outputsLink") or {}).get("uri")
+            if link:
+                with urllib.request.urlopen(link, timeout=10) as resp:  # noqa: S310
+                    out = json.loads(resp.read().decode("utf-8"))
+                b = out.get("body", out) or {}
+                email = {
+                    "subject": b.get("Subject") or b.get("subject"),
+                    "from": (b.get("From") or b.get("from") or {}),
+                    "bodyPreview": b.get("BodyPreview") or b.get("bodyPreview"),
+                }
+                if isinstance(email["from"], dict):
+                    email["from"] = (
+                        email["from"].get("emailAddress", {}).get("address")
+                        or email["from"].get("address")
+                    )
+        except Exception:  # noqa: BLE001
+            pass
+
+        actions = []
+        act_res = subprocess.run(
+            [az, "rest", "--method", "get", "--url", f"{base}/actions?api-version=2016-06-01"],
+            capture_output=True, text=True, timeout=60, shell=False,
+        )
+        if act_res.returncode == 0:
+            for a in json.loads(act_res.stdout or "{}").get("value", []):
+                p = a.get("properties", {})
+                actions.append(
+                    {
+                        "name": a.get("name"),
+                        "status": p.get("status"),
+                        "start": p.get("startTime"),
+                        "end": p.get("endTime"),
+                        "code": p.get("code"),
+                    }
+                )
+            actions.sort(key=lambda x: x.get("start") or "")
+
+        return {
+            "runName": run_name,
+            "status": run.get("status"),
+            "trigger": {"status": trig.get("status"), "start": trig.get("startTime")},
+            "email": email,
+            "actions": actions,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": str(exc)[:300]})
+
+
 @app.get("/api/stream")
 def api_stream(
     sample: str = Query("contract"),
     text: str | None = Query(None),
+    subject: str | None = Query(None),
 ):
     """Server-Sent-Events stream of a single orchestrator run, live."""
 
     def gen():
         # 1) Resolve the email payload ------------------------------------- #
-        if text:
-            payload = {"subject": "(custom)", "from": "you", "body": text}
+        if text or subject:
+            payload = {
+                "subject": (subject or "").strip() or "(no subject)",
+                "from": "you",
+                "body": (text or "").strip(),
+            }
         else:
             payload = SAMPLES.get(sample, SAMPLES["contract"])
 

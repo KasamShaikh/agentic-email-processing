@@ -84,6 +84,11 @@
     width: 100%; border: 1px solid var(--line); border-radius: 12px; padding: 11px;
     font-family: inherit; font-size: 12.5px; resize: vertical; min-height: 70px; color: var(--ink);
   }
+  input.custom-subj {
+    width: 100%; border: 1px solid var(--line); border-radius: 12px; padding: 11px;
+    font-family: inherit; font-size: 12.5px; color: var(--ink); margin-bottom: 8px;
+  }
+  input.custom-subj:focus, textarea:focus { outline: none; border-color: var(--magenta-soft); }
   .run-btn {
     width: 100%; margin-top: 12px; border: none; cursor: pointer;
     background: linear-gradient(100deg, var(--maroon), var(--magenta));
@@ -177,7 +182,9 @@
         <h2>▶ Simulate an email</h2>
         <div class="body">
           <div id="samples"></div>
-          <textarea id="customText" placeholder="…or paste a custom email body to classify"></textarea>
+          <div class="meta" style="margin:6px 0 8px">…or paste your own email:</div>
+          <input id="customSubject" class="custom-subj" placeholder="Subject" />
+          <textarea id="customText" placeholder="Email body — paste it here to see which agent the orchestrator routes to"></textarea>
           <button class="run-btn" id="runBtn">Run through the flow</button>
         </div>
       </section>
@@ -222,6 +229,7 @@
       <section class="card">
         <h2>⟳ Logic App runs <button class="refresh" id="refreshLA" style="margin-left:auto">refresh</button></h2>
         <div class="body" id="laRuns"><div class="meta">Loading real email-triggered runs…</div></div>
+        <div class="footnote">Click any run to trace its actions in the centre panel.</div>
       </section>
     </div>
   </div>
@@ -250,7 +258,8 @@ function addEvent(kind, title, html, ts){
 function setStatus(s){
   const pill = $("#statusPill");
   const map = {idle:"idle", running:"running", queued:"running", in_progress:"running",
-               completed:"completed", failed:"failed", cancelled:"cancelled", expired:"expired"};
+               completed:"completed", succeeded:"completed", failed:"failed",
+               cancelled:"cancelled", expired:"expired"};
   const cls = map[s] || "running";
   pill.className = `pill ${cls}`;
   pill.textContent = s;
@@ -266,7 +275,10 @@ function run(){
   $("#statusMeta").textContent = "Streaming live trace…";
 
   const custom = $("#customText").value.trim();
-  const qs = custom ? `text=${encodeURIComponent(custom)}` : `sample=${currentSample}`;
+  const subj = $("#customSubject").value.trim();
+  const qs = (custom || subj)
+    ? `text=${encodeURIComponent(custom)}&subject=${encodeURIComponent(subj)}`
+    : `sample=${currentSample}`;
   if (es) es.close();
   es = new EventSource(`/api/stream?${qs}`);
 
@@ -338,7 +350,7 @@ async function loadSamples(){
       const b = document.createElement("button");
       b.className = "sample-btn" + (i===0?" active":"");
       b.innerHTML = `<b>${labels[k]||k}</b><span>${subj}</span>`;
-      b.onclick = ()=>{ currentSample=k; $("#customText").value=""; document.querySelectorAll(".sample-btn").forEach(x=>x.classList.remove("active")); b.classList.add("active"); };
+      b.onclick = ()=>{ currentSample=k; $("#customText").value=""; $("#customSubject").value=""; document.querySelectorAll(".sample-btn").forEach(x=>x.classList.remove("active")); b.classList.add("active"); };
       box.appendChild(b);
     });
   }catch(e){ $("#samples").innerHTML = `<div class="err">Could not load samples.</div>`; }
@@ -369,10 +381,43 @@ async function loadLA(){
       const start = run.startTime? new Date(run.startTime).toLocaleString() : "";
       const el = document.createElement("div");
       el.className = "la-run";
+      el.style.cursor = "pointer";
+      el.title = "Click to trace this run's actions";
       el.innerHTML = `<span class="s ${run.status}"></span><div class="t">${run.status}</div><span class="d">${start}</span>`;
+      el.onclick = ()=> showLARun(run.name, run.status);
       box.appendChild(el);
     });
   }catch(e){ box.innerHTML = `<div class="err">Could not load Logic App runs.</div>`; }
+}
+
+async function showLARun(name, status){
+  if (es) es.close();
+  resetNodes();
+  $("#timeline").innerHTML = "";
+  $("#threadNote").textContent = "";
+  setStatus((status||"").toLowerCase());
+  $("#statusMeta").textContent = `Logic App run · ${name}`;
+  addEvent("orch","⟳ Logic App run", `<code>${name}</code> — fetching action trace…`, Date.now()/1000);
+  try{
+    const r = await fetch(`/api/logicapp/runs/${name}/actions`);
+    const d = await r.json();
+    $("#timeline").innerHTML = "";
+    if(d.error){ addEvent("error","⚠ Error", escapeHtml(d.error), Date.now()/1000); return; }
+    if(d.email && (d.email.subject || d.email.from)){
+      setNode("email","received");
+      addEvent("email","📧 Triggering email",
+        `<b>${escapeHtml(d.email.subject||"")}</b>${d.email.from?`<br><span class="meta">from ${escapeHtml(String(d.email.from))}</span>`:""}${d.email.bodyPreview?`<br>${escapeHtml(String(d.email.bodyPreview)).slice(0,180)}`:""}`, null);
+    }
+    addEvent("orch","Trigger fired", `status <span class="tag">${d.trigger&&d.trigger.status||"?"}</span>`, d.trigger&&d.trigger.start? Date.parse(d.trigger.start)/1000 : null);
+    (d.actions||[]).forEach(a=>{
+      const kind = a.status==="Succeeded" ? "agent" : (a.status==="Failed" ? "error" : "step");
+      const extra = (a.code && a.code!=="OK" && a.code!=="Accepted") ? ` · ${escapeHtml(a.code)}` : "";
+      addEvent(kind, a.name.replace(/_/g," "), `status <span class="tag">${a.status||""}</span>${extra}`, a.start? Date.parse(a.start)/1000 : null);
+    });
+    setStatus((d.status||status||"").toLowerCase());
+    $("#statusMeta").textContent = `Logic App run ${name} — ${d.status||status}`;
+    $("#threadNote").innerHTML = `Logic App action trace. This shows the workflow's own steps (trigger → blob → compose → call orchestrator).`;
+  }catch(e){ addEvent("error","⚠ Error", "Could not load run actions.", Date.now()/1000); }
 }
 
 $("#runBtn").onclick = run;
