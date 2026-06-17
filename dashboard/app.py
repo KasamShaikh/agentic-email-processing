@@ -134,6 +134,37 @@ def _record(intent: str, agents: list, attachments: list, files: list, source: s
         pass
 
 
+TRACE_DIR = DATA_DIR / "traces"
+
+
+def _save_trace(run_name: str, events: list) -> None:
+    """Persist the full end-to-end agent trace for a Logic App run so it can be
+    viewed later straight from disk — no need to re-run the agents."""
+    if not run_name or not re.fullmatch(r"[A-Za-z0-9]+", run_name):
+        return
+    try:
+        TRACE_DIR.mkdir(parents=True, exist_ok=True)
+        (TRACE_DIR / f"{run_name}.json").write_text(
+            json.dumps({"runName": run_name, "ts": time.time(), "events": events}),
+            encoding="utf-8",
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _load_trace(run_name: str) -> dict | None:
+    """Read a previously saved end-to-end agent trace for a run, if present."""
+    if not run_name or not re.fullmatch(r"[A-Za-z0-9]+", run_name):
+        return None
+    try:
+        p = TRACE_DIR / f"{run_name}.json"
+        if p.exists():
+            return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 def _az() -> str | None:
     """Resolve the Azure CLI executable (az.cmd on Windows)."""
     return shutil.which("az") or shutil.which("az.cmd")
@@ -710,6 +741,23 @@ def api_logicapp_run_actions(run_name: str):
         return JSONResponse({"error": str(exc)[:300]})
 
 
+@app.get("/api/logicapp/runs/{run_name}/trace")
+def api_logicapp_run_trace(run_name: str):
+    """Return the saved end-to-end agent trace for a run (from disk), so the UI can
+    show the full flow — Logic App ingest + agent processing — without re-running."""
+    if not re.fullmatch(r"[A-Za-z0-9]+", run_name or ""):
+        return JSONResponse({"error": "invalid run name"}, status_code=400)
+    t = _load_trace(run_name)
+    if not t:
+        return {"exists": False, "events": []}
+    return {
+        "exists": True,
+        "runName": run_name,
+        "savedAt": t.get("ts"),
+        "events": t.get("events", []),
+    }
+
+
 @app.get("/api/stream")
 def api_stream(
     sample: str = Query("contract"),
@@ -756,6 +804,7 @@ def api_events_stream(run: str = Query(...)):
         return JSONResponse({"error": "invalid run name"}, status_code=400)
 
     def gen():
+        collected: list = []
         payload = _reconstruct_email_from_run(run)
         if not payload:
             yield _sse(
@@ -770,23 +819,31 @@ def api_events_stream(run: str = Query(...)):
             (a.get("name") if isinstance(a, dict) else a)
             for a in payload.get("attachments", [])
         ] or payload.get("attachmentBlobs", [])
-        yield _sse(
-            {
-                "type": "email",
-                "subject": payload.get("subject"),
-                "from": payload.get("from"),
-                "body": payload.get("body") or payload.get("bodyPreview"),
-                "attachments": att_display,
-                "source": "logicapp",
-                "runName": run,
-                "ts": time.time(),
-            }
-        )
+        email_ev = {
+            "type": "email",
+            "subject": payload.get("subject"),
+            "from": payload.get("from"),
+            "body": payload.get("body") or payload.get("bodyPreview"),
+            "attachments": att_display,
+            "source": "logicapp",
+            "runName": run,
+            "ts": time.time(),
+        }
+        collected.append(email_ev)
+        yield _sse(email_ev)
 
         try:
-            yield from _orchestrate(client(), json.dumps(payload), source="logicapp")
+            for chunk in _orchestrate(client(), json.dumps(payload), source="logicapp"):
+                try:
+                    collected.append(json.loads(chunk[6:].strip()))
+                except Exception:  # noqa: BLE001
+                    pass
+                yield chunk
         except Exception as exc:  # noqa: BLE001
             yield _sse({"type": "error", "message": str(exc)[:400]})
+        finally:
+            # Save the end-to-end trace so this run can be viewed from logs later.
+            _save_trace(run, collected)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 

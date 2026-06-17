@@ -510,13 +510,37 @@ async function showLARun(name, status){
     $("#statusMeta").textContent = `Logic App run ${name} — ${d.status||status}`;
     $("#threadNote").innerHTML = `Logic App action trace. This shows the workflow's own steps (trigger → blob → compose → call orchestrator).`;
 
-    // Option 1: replay this REAL email through the live agent routing (no Logic App change).
+    // End-to-end agent flow: load the saved trace from logs (no re-run) if we have one.
+    let hasTrace = false;
+    try{
+      const tr = await fetch(`/api/logicapp/runs/${name}/trace`);
+      const td = await tr.json();
+      if(td.exists && td.events && td.events.length){
+        hasTrace = true;
+        const sep = document.createElement("div");
+        sep.className = "meta"; sep.style.margin = "14px 0 2px"; sep.style.fontWeight = "600";
+        sep.innerHTML = `▾ Agent processing — replayed from saved trace${td.savedAt?` · ${new Date(td.savedAt*1000).toLocaleString()}`:""}`;
+        $("#timeline").appendChild(sep);
+        td.events.forEach(ev=>{ if(ev.type==="email") return; try{ handleEvent(ev, null); }catch(_){} });
+        $("#threadNote").innerHTML = `End-to-end flow: Logic App ingest + agent processing — loaded from the saved trace (not re-run).`;
+      }
+    }catch(_){}
+
+    // Re-run / generate button: re-process live (this overwrites the saved trace).
     const replay = document.createElement("button");
     replay.className = "run-btn";
     replay.style.marginTop = "12px";
-    replay.textContent = "▶ Process this email through the agents (live)";
+    replay.textContent = hasTrace
+      ? "↻ Re-process this email through the agents (live)"
+      : "▶ Process this email through the agents (live)";
     replay.onclick = () => runEventStream(name);
     $("#timeline").appendChild(replay);
+    if(!hasTrace){
+      const hint = document.createElement("div");
+      hint.className = "meta"; hint.style.marginTop = "6px";
+      hint.textContent = "No saved agent trace for this run yet — process it once and it'll be saved so you can view the full end-to-end flow later without re-running.";
+      $("#timeline").appendChild(hint);
+    }
   }catch(e){ addEvent("error","⚠ Error", "Could not load run actions.", Date.now()/1000); }
 }
 
