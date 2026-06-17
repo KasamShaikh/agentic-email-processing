@@ -10,9 +10,9 @@
       "type": "String",
       "defaultValue": ""
     },
-    "orchestratorAgentId": {
+    "orchestratorAgentName": {
       "type": "String",
-      "defaultValue": ""
+      "defaultValue": "orchestrator-ks"
     },
     "agentsApiVersion": {
       "type": "String",
@@ -111,22 +111,48 @@
         "attachmentBlobs": "@variables('attachmentUrls')"
       }
     },
-    "If_orchestrator_configured": {
-      "type": "If",
+    "List_agents": {
+      "type": "Http",
       "runAfter": {
         "Compose_payload": [
+          "Succeeded"
+        ]
+      },
+      "inputs": {
+        "method": "GET",
+        "uri": "@{parameters('projectAgentsEndpoint')}/assistants?api-version=@{parameters('agentsApiVersion')}",
+        "authentication": {
+          "type": "ManagedServiceIdentity",
+          "audience": "https://ai.azure.com"
+        }
+      }
+    },
+    "Filter_orchestrator": {
+      "type": "Query",
+      "runAfter": {
+        "List_agents": [
+          "Succeeded"
+        ]
+      },
+      "inputs": {
+        "from": "@coalesce(body('List_agents')?['data'], json('[]'))",
+        "where": "@equals(item()?['name'], parameters('orchestratorAgentName'))"
+      }
+    },
+    "If_orchestrator_found": {
+      "type": "If",
+      "runAfter": {
+        "Filter_orchestrator": [
           "Succeeded"
         ]
       },
       "expression": {
         "and": [
           {
-            "not": {
-              "equals": [
-                "@parameters('orchestratorAgentId')",
-                ""
-              ]
-            }
+            "greater": [
+              "@length(body('Filter_orchestrator'))",
+              0
+            ]
           }
         ]
       },
@@ -140,7 +166,7 @@
               "Content-Type": "application/json"
             },
             "body": {
-              "assistant_id": "@parameters('orchestratorAgentId')",
+              "assistant_id": "@{first(body('Filter_orchestrator'))?['id']}",
               "thread": {
                 "messages": [
                   {

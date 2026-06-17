@@ -19,8 +19,8 @@ param blobConnectionName string = 'azureblob-ks'
 @description('Foundry project data-plane endpoint used to call the orchestrator agent.')
 param projectAgentsEndpoint string = 'https://agentic-email-foundry-ks.services.ai.azure.com/api/projects/email-agentic-ks'
 
-@description('Orchestrator agent id (set after Phase 3 creates the agents). Empty disables the agent call.')
-param orchestratorAgentId string = ''
+@description('Name of the orchestrator agent. The workflow resolves its id at runtime, so it survives agent re-creation.')
+param orchestratorAgentName string = 'orchestrator-ks'
 
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
   name: storageAccountName
@@ -79,8 +79,8 @@ resource workflow 'Microsoft.Logic/workflows@2019-05-01' = {
       projectAgentsEndpoint: {
         value: projectAgentsEndpoint
       }
-      orchestratorAgentId: {
-        value: orchestratorAgentId
+      orchestratorAgentName: {
+        value: orchestratorAgentName
       }
     }
   }
