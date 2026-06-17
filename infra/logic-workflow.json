@@ -66,55 +66,37 @@
       },
       "foreach": "@coalesce(triggerBody()?['attachments'], json('[]'))",
       "actions": {
-        "If_pdf": {
-          "type": "If",
-          "expression": {
-            "and": [
-              {
-                "endsWith": [
-                  "@toLower(item()?['name'])",
-                  ".pdf"
-                ]
-              }
-            ]
-          },
-          "actions": {
-            "Create_blob": {
-              "type": "ApiConnection",
-              "inputs": {
-                "host": {
-                  "connection": {
-                    "name": "@parameters('$connections')['azureblob']['connectionId']"
-                  }
-                },
-                "method": "post",
-                "body": "@base64ToBinary(item()?['contentBytes'])",
-                "headers": {
-                  "ReadFileMetadataFromServer": true
-                },
-                "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('agenticemailks'))}/files",
-                "queries": {
-                  "folderPath": "/incoming-attachments",
-                  "name": "@item()?['name']",
-                  "queryParametersSingleEncoded": true
-                }
+        "Create_blob": {
+          "type": "ApiConnection",
+          "inputs": {
+            "host": {
+              "connection": {
+                "name": "@parameters('$connections')['azureblob']['connectionId']"
               }
             },
-            "Append_blob_path": {
-              "type": "AppendToArrayVariable",
-              "runAfter": {
-                "Create_blob": [
-                  "Succeeded"
-                ]
-              },
-              "inputs": {
-                "name": "attachmentUrls",
-                "value": "@body('Create_blob')?['Path']"
-              }
+            "method": "post",
+            "body": "@base64ToBinary(item()?['contentBytes'])",
+            "headers": {
+              "ReadFileMetadataFromServer": true
+            },
+            "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('agenticemailks'))}/files",
+            "queries": {
+              "folderPath": "/incoming-attachments",
+              "name": "@item()?['name']",
+              "queryParametersSingleEncoded": true
             }
+          }
+        },
+        "Append_blob_path": {
+          "type": "AppendToArrayVariable",
+          "runAfter": {
+            "Create_blob": [
+              "Succeeded"
+            ]
           },
-          "else": {
-            "actions": {}
+          "inputs": {
+            "name": "attachmentUrls",
+            "value": "@body('Create_blob')?['Path']"
           }
         }
       }
