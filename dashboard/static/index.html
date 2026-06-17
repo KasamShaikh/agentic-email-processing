@@ -266,30 +266,39 @@ function setStatus(s){
 }
 
 function run(){
-  const btn = $("#runBtn");
-  btn.disabled = true;
-  resetNodes();
-  $("#timeline").innerHTML = "";
-  $("#threadNote").textContent = "";
-  setStatus("running");
-  $("#statusMeta").textContent = "Streaming live trace…";
-
   const custom = $("#customText").value.trim();
   const subj = $("#customSubject").value.trim();
   const qs = (custom || subj)
     ? `text=${encodeURIComponent(custom)}&subject=${encodeURIComponent(subj)}`
     : `sample=${currentSample}`;
-  if (es) es.close();
-  es = new EventSource(`/api/stream?${qs}`);
+  openStream(`/api/stream?${qs}`, $("#runBtn"));
+}
 
-  es.onmessage = (e) => {
-    const ev = JSON.parse(e.data);
+// Stream the FULL live agent trace for a REAL Logic-App email (any attachment format).
+function runEventStream(runName){
+  openStream(`/api/events/stream?run=${encodeURIComponent(runName)}`, null);
+}
+
+function openStream(url, btn){
+  if (es) es.close();
+  if (btn) btn.disabled = true;
+  resetNodes();
+  $("#timeline").innerHTML = "";
+  $("#threadNote").textContent = "";
+  setStatus("running");
+  $("#statusMeta").textContent = "Streaming live trace…";
+  es = new EventSource(url);
+  es.onmessage = (e) => handleEvent(JSON.parse(e.data), btn);
+  es.onerror = () => { if(btn) btn.disabled = false; if(es) es.close(); };
+}
+
+function handleEvent(ev, btn){
     switch(ev.type){
       case "email":
         setNode("email","received");
-        addEvent("email","📧 Email received",
-          `<b>${ev.subject||""}</b><br><span class="meta">from ${ev.from||"?"}</span><br>${(ev.body||"").slice(0,180)}
-           ${(ev.attachments&&ev.attachments.length)?`<br><span class="tag">${ev.attachments.length} attachment(s)</span>`:""}`, ev.ts);
+        addEvent("email", ev.source==="logicapp" ? "📧 Real email · Logic App" : "📧 Email received",
+          `<b>${escapeHtml(ev.subject||"")}</b><br><span class="meta">from ${escapeHtml(String(ev.from||"?"))}</span><br>${escapeHtml(ev.body||"").slice(0,180)}
+           ${(ev.attachments&&ev.attachments.length)?`<br>${ev.attachments.map(a=>`<span class="tag">📎 ${escapeHtml(String(a))}</span>`).join(" ")}`:""}`, ev.ts);
         break;
       case "orchestrator_start":
         setNode("orchestrator-ks","active");
@@ -327,16 +336,14 @@ function run(){
         addEvent("final","✔ Flow finished", body, ev.ts);
         $("#statusMeta").textContent = ev.status==="completed" ? "Run completed." : `Run ${ev.status}.`;
         if(ev.threadId) $("#threadNote").innerHTML = `Thread <code>${ev.threadId}</code> — open in the Foundry portal to inspect every step.`;
-        es.close(); btn.disabled = false;
+        if(es) es.close(); if(btn) btn.disabled = false;
         break;
       case "error":
         addEvent("error","⚠ Error", escapeHtml(ev.message), Date.now()/1000);
         setStatus("failed"); $("#statusMeta").textContent = "Run errored.";
-        es.close(); btn.disabled = false;
+        if(es) es.close(); if(btn) btn.disabled = false;
         break;
     }
-  };
-  es.onerror = () => { btn.disabled = false; if(es) es.close(); };
 }
 
 function escapeHtml(s){ return (s||"").replace(/[&<>]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
@@ -417,12 +424,21 @@ async function showLARun(name, status){
     setStatus((d.status||status||"").toLowerCase());
     $("#statusMeta").textContent = `Logic App run ${name} — ${d.status||status}`;
     $("#threadNote").innerHTML = `Logic App action trace. This shows the workflow's own steps (trigger → blob → compose → call orchestrator).`;
+
+    // Option 1: replay this REAL email through the live agent routing (no Logic App change).
+    const replay = document.createElement("button");
+    replay.className = "run-btn";
+    replay.style.marginTop = "12px";
+    replay.textContent = "▶ Process this email through the agents (live)";
+    replay.onclick = () => runEventStream(name);
+    $("#timeline").appendChild(replay);
   }catch(e){ addEvent("error","⚠ Error", "Could not load run actions.", Date.now()/1000); }
 }
 
 $("#runBtn").onclick = run;
 $("#refreshLA").onclick = loadLA;
 loadSamples(); loadInventory(); loadLA();
+setInterval(loadLA, 20000);   // keep the real-email feed fresh
 </script>
 </body>
 </html>

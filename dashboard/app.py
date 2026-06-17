@@ -190,6 +190,224 @@ def _parse_intent(text: str) -> tuple[str, str]:
     return intent, reason
 
 
+def _orchestrate(ag, payload_str: str):
+    """Yield SSE events for: classify intent -> route -> run specialists.
+
+    Reused by both the UI simulator (/api/stream) and real Logic App emails
+    (/api/events/stream).
+    """
+    id_to_name = _agents_index()
+    name_to_id = {n: i for i, n in id_to_name.items()}
+    orchestrator_id = name_to_id.get(ORCHESTRATOR_NAME)
+    if not orchestrator_id:
+        yield _sse({"type": "error", "message": "orchestrator-ks not found"})
+        return
+
+    agents_called: list[str] = []
+    yield _sse(
+        {
+            "type": "orchestrator_start",
+            "agentId": orchestrator_id,
+            "name": ORCHESTRATOR_NAME,
+            "ts": time.time(),
+        }
+    )
+    yield _sse({"type": "status", "status": "running", "ts": time.time()})
+    orc = _run_agent(ag, orchestrator_id, payload_str)
+    yield _sse(
+        {
+            "type": "run_created",
+            "threadId": orc["threadId"],
+            "runId": orc["runId"],
+            "status": orc["status"],
+            "ts": time.time(),
+        }
+    )
+    if orc["status"] != "completed":
+        yield _sse(
+            {
+                "type": "done",
+                "status": orc["status"],
+                "agentsCalled": [],
+                "finalMessage": "",
+                "error": orc["error"],
+                "threadId": orc["threadId"],
+                "ts": time.time(),
+            }
+        )
+        return
+
+    intent, reason = _parse_intent(orc["text"])
+    yield _sse(
+        {
+            "type": "intent",
+            "intent": intent,
+            "label": INTENT_LABEL.get(intent, intent),
+            "reason": reason,
+            "ts": time.time(),
+        }
+    )
+
+    results: list[dict] = []
+    target = INTENT_TO_AGENT[intent]
+    yield _sse({"type": "agent_called", "name": target, "ts": time.time()})
+    agents_called.append(target)
+    spec = _run_agent(ag, name_to_id[target], payload_str)
+    yield _sse(
+        {
+            "type": "result",
+            "agent": target,
+            "status": spec["status"],
+            "text": spec["text"],
+            "error": spec["error"],
+            "ts": time.time(),
+        }
+    )
+    results.append({"agent": target, "result": spec["text"]})
+
+    if intent == "pre_onboarding" and spec["status"] == "completed":
+        fv = "form-verification-ks"
+        yield _sse({"type": "agent_called", "name": fv, "ts": time.time()})
+        agents_called.append(fv)
+        fvr = _run_agent(ag, name_to_id[fv], spec["text"] or payload_str)
+        yield _sse(
+            {
+                "type": "result",
+                "agent": fv,
+                "status": fvr["status"],
+                "text": fvr["text"],
+                "error": fvr["error"],
+                "ts": time.time(),
+            }
+        )
+        results.append({"agent": fv, "result": fvr["text"]})
+
+    final = {"intent": intent, "delegated_to": agents_called, "results": results}
+    yield _sse(
+        {
+            "type": "done",
+            "status": "completed",
+            "intent": intent,
+            "agentsCalled": agents_called,
+            "finalMessage": json.dumps(final, indent=2),
+            "error": None,
+            "threadId": orc["threadId"],
+            "ts": time.time(),
+        }
+    )
+
+
+def _sub() -> str | None:
+    az = _az()
+    if not az:
+        return None
+    out = subprocess.run(
+        [az, "account", "show", "--query", "id", "-o", "tsv"],
+        capture_output=True, text=True, timeout=30, shell=False,
+    )
+    return out.stdout.strip() or None
+
+
+def _fetch_link_json(uri: str):
+    with urllib.request.urlopen(uri, timeout=10) as resp:  # noqa: S310
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _clean_text(s, limit: int = 4000) -> str:
+    """Strip HTML/whitespace and cap length so big email threads don't blow up
+    the classifier (large raw-HTML bodies trigger a server_error on the run)."""
+    if not isinstance(s, str):
+        s = str(s or "")
+    s = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", s)
+    s = re.sub(r"(?s)<[^>]+>", " ", s)
+    s = (
+        s.replace("&nbsp;", " ").replace("&amp;", "&")
+        .replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"')
+    )
+    s = re.sub(r"\s+", " ", s).strip()
+    return s[:limit]
+
+
+def _reconstruct_email_from_run(run_name: str) -> dict | None:
+    """Rebuild the email payload from a Logic App run's outputs — no workflow change
+    needed. Accepts attachments of ANY format (read straight from the email)."""
+    az = _az()
+    sub = _sub()
+    if not az or not sub:
+        return None
+    base = (
+        f"https://management.azure.com/subscriptions/{sub}/resourceGroups/"
+        f"{RESOURCE_GROUP}/providers/Microsoft.Logic/workflows/{LOGIC_APP_NAME}/runs/{run_name}"
+    )
+    run_res = subprocess.run(
+        [az, "rest", "--method", "get", "--url", f"{base}?api-version=2016-06-01"],
+        capture_output=True, text=True, timeout=60, shell=False,
+    )
+    if run_res.returncode != 0:
+        return None
+    trig = json.loads(run_res.stdout or "{}").get("properties", {}).get("trigger", {})
+
+    payload = {
+        "subject": "(no subject)",
+        "from": "",
+        "bodyPreview": "",
+        "body": "",
+        "attachments": [],
+        "attachmentBlobs": [],
+    }
+
+    # Primary source: the trigger outputs (the raw email) — ALL attachment formats.
+    try:
+        link = (trig.get("outputsLink") or {}).get("uri")
+        if link:
+            b = (_fetch_link_json(link) or {}).get("body", {}) or {}
+            payload["subject"] = b.get("Subject") or b.get("subject") or payload["subject"]
+            frm = b.get("From") or b.get("from") or {}
+            if isinstance(frm, dict):
+                frm = frm.get("emailAddress", {}).get("address") or frm.get("address") or ""
+            payload["from"] = frm
+            payload["bodyPreview"] = b.get("BodyPreview") or b.get("bodyPreview") or ""
+            body = b.get("Body") or b.get("body") or payload["bodyPreview"]
+            if isinstance(body, dict):
+                body = body.get("content") or body.get("Content") or ""
+            payload["body"] = body
+            for att in (b.get("Attachments") or b.get("attachments") or []):
+                if isinstance(att, dict):
+                    name = att.get("Name") or att.get("name")
+                    ctype = att.get("ContentType") or att.get("contentType")
+                    if name:
+                        payload["attachments"].append({"name": name, "contentType": ctype})
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Best-effort enhancement: the composed payload (exact body + saved blob paths).
+    try:
+        act_res = subprocess.run(
+            [az, "rest", "--method", "get", "--url", f"{base}/actions?api-version=2016-06-01"],
+            capture_output=True, text=True, timeout=60, shell=False,
+        )
+        if act_res.returncode == 0:
+            for a in json.loads(act_res.stdout or "{}").get("value", []):
+                if a.get("name") == "Compose_payload":
+                    olink = (a.get("properties", {}).get("outputsLink") or {}).get("uri")
+                    if olink:
+                        raw = _fetch_link_json(olink)
+                        cval = raw
+                        if isinstance(raw, dict) and "subject" not in raw and isinstance(raw.get("body"), dict):
+                            cval = raw["body"]
+                        if isinstance(cval, dict) and "subject" in cval:
+                            payload["body"] = cval.get("body") or payload["body"]
+                            payload["attachmentBlobs"] = cval.get("attachmentBlobs") or payload["attachmentBlobs"]
+                    break
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Keep the classifier input small & clean (full HTML threads cause server_error).
+    payload["bodyPreview"] = _clean_text(payload["bodyPreview"], 600)
+    payload["body"] = _clean_text(payload["body"] or payload["bodyPreview"], 4000)
+    return payload
+
+
 # --------------------------------------------------------------------------- #
 # API
 # --------------------------------------------------------------------------- #
@@ -379,117 +597,50 @@ def api_stream(
         )
 
         try:
-            ag = client()
-            id_to_name = _agents_index()
-            name_to_id = {n: i for i, n in id_to_name.items()}
-            orchestrator_id = name_to_id.get(ORCHESTRATOR_NAME)
-            if not orchestrator_id:
-                yield _sse({"type": "error", "message": "orchestrator-ks not found"})
-                return
+            yield from _orchestrate(client(), json.dumps(payload))
+        except Exception as exc:  # noqa: BLE001
+            yield _sse({"type": "error", "message": str(exc)[:400]})
 
-            payload_str = json.dumps(payload)
-            agents_called: list[str] = []
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
-            # 2) Orchestrator = intent classifier ------------------------- #
+
+@app.get("/api/events/stream")
+def api_events_stream(run: str = Query(...)):
+    """Stream the FULL live agent routing trace for a REAL email — reconstructed
+    from a Logic App run's outputs (no workflow change, any attachment format)."""
+    if not re.fullmatch(r"[A-Za-z0-9]+", run or ""):
+        return JSONResponse({"error": "invalid run name"}, status_code=400)
+
+    def gen():
+        payload = _reconstruct_email_from_run(run)
+        if not payload:
             yield _sse(
                 {
-                    "type": "orchestrator_start",
-                    "agentId": orchestrator_id,
-                    "name": ORCHESTRATOR_NAME,
-                    "ts": time.time(),
+                    "type": "error",
+                    "message": "Could not read this email from the Logic App run outputs.",
                 }
             )
-            yield _sse({"type": "status", "status": "running", "ts": time.time()})
-            orc = _run_agent(ag, orchestrator_id, payload_str)
-            yield _sse(
-                {
-                    "type": "run_created",
-                    "threadId": orc["threadId"],
-                    "runId": orc["runId"],
-                    "status": orc["status"],
-                    "ts": time.time(),
-                }
-            )
-            if orc["status"] != "completed":
-                yield _sse(
-                    {
-                        "type": "done",
-                        "status": orc["status"],
-                        "agentsCalled": [],
-                        "finalMessage": "",
-                        "error": orc["error"],
-                        "threadId": orc["threadId"],
-                        "ts": time.time(),
-                    }
-                )
-                return
+            return
 
-            intent, reason = _parse_intent(orc["text"])
-            yield _sse(
-                {
-                    "type": "intent",
-                    "intent": intent,
-                    "label": INTENT_LABEL.get(intent, intent),
-                    "reason": reason,
-                    "ts": time.time(),
-                }
-            )
-
-            # 3) Route to the matching specialist (in code) --------------- #
-            results: list[dict] = []
-            target = INTENT_TO_AGENT[intent]
-            yield _sse({"type": "agent_called", "name": target, "ts": time.time()})
-            agents_called.append(target)
-            spec = _run_agent(ag, name_to_id[target], payload_str)
-            yield _sse(
-                {
-                    "type": "result",
-                    "agent": target,
-                    "status": spec["status"],
-                    "text": spec["text"],
-                    "error": spec["error"],
-                    "ts": time.time(),
-                }
-            )
-            results.append({"agent": target, "result": spec["text"]})
-
-            # 3b) Pre-onboarding chains to form-verification -------------- #
-            if intent == "pre_onboarding" and spec["status"] == "completed":
-                fv = "form-verification-ks"
-                yield _sse({"type": "agent_called", "name": fv, "ts": time.time()})
-                agents_called.append(fv)
-                fv_input = spec["text"] or payload_str
-                fvr = _run_agent(ag, name_to_id[fv], fv_input)
-                yield _sse(
-                    {
-                        "type": "result",
-                        "agent": fv,
-                        "status": fvr["status"],
-                        "text": fvr["text"],
-                        "error": fvr["error"],
-                        "ts": time.time(),
-                    }
-                )
-                results.append({"agent": fv, "result": fvr["text"]})
-
-            # 4) Final summary -------------------------------------------- #
-            final = {
-                "intent": intent,
-                "delegated_to": agents_called,
-                "results": results,
+        att_display = [
+            (a.get("name") if isinstance(a, dict) else a)
+            for a in payload.get("attachments", [])
+        ] or payload.get("attachmentBlobs", [])
+        yield _sse(
+            {
+                "type": "email",
+                "subject": payload.get("subject"),
+                "from": payload.get("from"),
+                "body": payload.get("body") or payload.get("bodyPreview"),
+                "attachments": att_display,
+                "source": "logicapp",
+                "runName": run,
+                "ts": time.time(),
             }
-            yield _sse(
-                {
-                    "type": "done",
-                    "status": "completed",
-                    "intent": intent,
-                    "agentsCalled": agents_called,
-                    "finalMessage": json.dumps(final, indent=2),
-                    "error": None,
-                    "threadId": orc["threadId"],
-                    "ts": time.time(),
-                }
-            )
+        )
+
+        try:
+            yield from _orchestrate(client(), json.dumps(payload))
         except Exception as exc:  # noqa: BLE001
             yield _sse({"type": "error", "message": str(exc)[:400]})
 
