@@ -39,6 +39,12 @@ OUTPUT_PREFIX = "onboarding/"
 # and the flow uses them, whether triggered by an email or the UI button.
 DEMO_CONTAINER = "onboarding"
 
+# Cap the text sent to the agent per form. A scanned multi-page form (e.g. an Axis
+# merchant application) can OCR to 60k+ chars of dense tables; the full combined
+# prompt overruns the model deployment and the run fails with a generic server_error.
+# Form fields live near the top, so ~12k chars/form is ample and keeps the call stable.
+MAX_FORM_CHARS = 12000
+
 # Filename hints used to tell the two forms apart.
 _WEB_HINTS = ("web", "ui", "portal", "screen", "json", "online")
 _HAND_HINTS = ("hand", "scan", "written", "manual", "paper")
@@ -135,6 +141,13 @@ def process(
                "ts": time.time()}
         return
 
+    if len(web_text) > MAX_FORM_CHARS:
+        warnings.append(f"Web-UI form trimmed to {MAX_FORM_CHARS} chars (was {len(web_text)}).")
+        web_text = web_text[:MAX_FORM_CHARS]
+    if len(hand_text) > MAX_FORM_CHARS:
+        warnings.append(f"Handwritten form trimmed to {MAX_FORM_CHARS} chars (was {len(hand_text)}).")
+        hand_text = hand_text[:MAX_FORM_CHARS]
+
     combined = (
         "=== FORM A — WEB UI ===\n" + web_text.strip() +
         "\n\n=== FORM B — HANDWRITTEN ===\n" + hand_text.strip() + "\n"
@@ -142,8 +155,12 @@ def process(
     res = run_agent(combined)
     yield {"type": "aligned", "status": res.get("status"), "ts": time.time()}
     if res.get("status") != "completed":
+        detail = res.get("error")
+        msg = "form-compare-ks did not complete."
+        if detail:
+            msg += f" {detail.get('message') if isinstance(detail, dict) else detail}"
         yield {"type": "onboarding_done", "files": [],
-               "warnings": warnings + ["form-compare-ks did not complete."], "ts": time.time()}
+               "warnings": warnings + [msg], "ts": time.time()}
         return
 
     data_obj = _parse_json(res.get("text", ""))
