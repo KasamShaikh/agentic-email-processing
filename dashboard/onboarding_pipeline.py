@@ -34,6 +34,11 @@ INPUT_CONTAINER = "incoming-attachments"
 OUTPUT_CONTAINER = "contract-notes-output"
 OUTPUT_PREFIX = "onboarding/"
 
+# Demo: onboarding always runs against the two fixed sample forms kept under this
+# folder in the input container (a web-UI form + a handwritten form). Drop any two
+# files here and the flow uses them, whether triggered by an email or the UI button.
+DEMO_PREFIX = "onboarding-samples/"
+
 _credential = DefaultAzureCredential()
 _blob_service = None
 _doc_client = None
@@ -65,6 +70,22 @@ def _blob_name(path: str) -> str:
     p = (path or "").lstrip("/")
     prefix = f"{INPUT_CONTAINER}/"
     return p[len(prefix):] if p.startswith(prefix) else p
+
+
+def demo_attachments() -> list[str]:
+    """List the fixed demo onboarding forms kept under
+    `incoming-attachments/onboarding-samples/` (a web-UI form + a handwritten form).
+
+    Returns full container-qualified paths, sorted by name. Empty list if the folder
+    holds no files, in which case callers fall back to the email's own attachments.
+    """
+    container = _blob().get_container_client(INPUT_CONTAINER)
+    names = [
+        b.name
+        for b in container.list_blobs(name_starts_with=DEMO_PREFIX)
+        if not b.name.endswith("/")
+    ]
+    return [f"{INPUT_CONTAINER}/{n}" for n in sorted(names)]
 
 
 def download_attachment(path: str) -> bytes:

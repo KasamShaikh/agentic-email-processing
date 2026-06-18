@@ -546,20 +546,39 @@ def _orchestrate(ag, payload_str: str, source: str = "ui"):
 
     # Onboarding: two-form cross-verification (web-UI vs handwritten) handled by a
     # dedicated pipeline (download -> OCR both -> form-compare-ks aligns -> score).
+    # Demo: always process the two fixed sample forms kept under
+    # incoming-attachments/onboarding-samples/ — identical behaviour for an inbound
+    # email and the UI onboarding button. Falls back to the email's own attachments
+    # only if that demo folder is empty.
     if intent == "pre_onboarding":
         compare_id = name_to_id.get("form-compare-ks")
+        from onboarding_pipeline import demo_attachments
+
+        try:
+            demo = demo_attachments()
+        except Exception:  # noqa: BLE001
+            demo = []
+        blobs = demo or payload_attachments
         if not compare_id:
             yield _sse({"type": "error", "message": "form-compare-ks not found"})
         else:
+            yield _sse(
+                {
+                    "type": "onboarding_source",
+                    "usingDemo": bool(demo),
+                    "files": [b.rsplit("/", 1)[-1] for b in blobs],
+                    "ts": time.time(),
+                }
+            )
             yield _sse({"type": "agent_called", "name": "form-compare-ks", "ts": time.time()})
             agents_called.append("form-compare-ks")
-            fw, ww = yield from _run_onboarding(ag, compare_id, payload_attachments)
+            fw, ww = yield from _run_onboarding(ag, compare_id, blobs)
             files_written, all_warnings = fw, ww
             results.append(
                 {"agent": "form-compare-ks", "files": files_written, "warnings": all_warnings}
             )
         final = {"intent": intent, "delegated_to": agents_called, "results": results}
-        _record(intent, agents_called, payload_attachments, files_written, source)
+        _record(intent, agents_called, blobs, files_written, source)
         yield _sse(
             {
                 "type": "done",
