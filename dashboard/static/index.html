@@ -98,6 +98,26 @@
   .run-btn:hover { filter: brightness(1.06); }
   .run-btn:disabled { opacity: .55; cursor: not-allowed; }
 
+  /* About page */
+  .about h3 { color: var(--maroon); font-size: 15px; margin: 2px 0 8px; }
+  .about p, .about li { font-size: 13.5px; line-height: 1.6; }
+  .about .lead { font-size: 14.5px; color: var(--ink); }
+  .about code { background:#fdf2f7; color: var(--maroon-deep); padding:1px 6px; border-radius:6px; font-size:12px; }
+  .about table { width:100%; border-collapse: collapse; margin-top:6px; }
+  .about th, .about td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); font-size:12.8px; vertical-align: top; }
+  .about th { color: var(--maroon); text-transform: uppercase; letter-spacing:.5px; font-size:11px; }
+  .about tr:last-child td { border-bottom: none; }
+  .steps { counter-reset: step; list-style:none; padding:0; margin:4px 0 0; }
+  .steps > li { position:relative; padding:0 0 16px 42px; }
+  .steps > li:before { counter-increment: step; content: counter(step); position:absolute; left:0; top:0; width:28px; height:28px; border-radius:50%; background:linear-gradient(100deg,var(--maroon),var(--magenta)); color:#fff; display:grid; place-items:center; font-weight:700; font-size:13px; }
+  .steps > li:not(:last-child):after { content:""; position:absolute; left:13px; top:30px; bottom:0; width:2px; background:var(--line); }
+  .steps b { display:block; margin-bottom:2px; }
+  .pill-row { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  .pill-row span { background:#fdf2f7; border:1px solid var(--line); color:var(--maroon-deep); padding:5px 11px; border-radius:20px; font-size:12px; }
+  .about-cards { display:grid; grid-template-columns: 1fr 1fr; gap:18px; }
+  @media (max-width:760px){ .about-cards{ grid-template-columns:1fr; } }
+  .callout { background:#fdf2f7; border-left:4px solid var(--magenta); border-radius:10px; padding:12px 14px; font-size:13px; line-height:1.55; }
+
   /* flow diagram */
   .flow { display:flex; flex-direction:column; gap:10px; }
   .node {
@@ -199,6 +219,7 @@
   <nav class="tabs">
     <button class="tab active" id="tabLive">◷ Live Flow</button>
     <button class="tab" id="tabOverview">▦ Overview</button>
+    <button class="tab" id="tabAbout">ⓘ About</button>
   </nav>
 
   <div class="wrap" id="viewLive">
@@ -276,6 +297,108 @@
       </section>
       <div class="footnote">Counts every email the orchestrator has processed (live UI runs and real emails), grouped by day and intent.</div>
     </div>
+  </div>
+
+  <!-- ABOUT -->
+  <div class="wrap about" id="viewAbout" style="display:none; grid-template-columns: 1fr; max-width: 1040px;">
+    <section class="card">
+      <h2>ⓘ What this app is</h2>
+      <div class="body">
+        <p class="lead">An <b>agentic email-processing pipeline</b> on Azure. Emails land in an Office 365 inbox; a Foundry
+        orchestrator agent reads each one, decides <i>what kind</i> of email it is, and routes it to a specialist
+        agent that does the real work — extracting trades from a broker contract note, or cross-checking a
+        merchant’s onboarding forms — and writes a clean, auditable output file back to storage.</p>
+        <p>This screen is the live operations view: the centre panel streams every step in real time, the routing
+        map on the right shows which agent fired, and the Logic App panel lists the real email-triggered runs.</p>
+      </div>
+    </section>
+
+    <div class="about-cards">
+      <section class="card">
+        <h2>🧠 The model &amp; platform</h2>
+        <div class="body">
+          <p><b>LLM:</b> a GPT‑class small model deployed on <b>Azure AI Foundry</b> (deployment <code>gpt-mini-ks</code>),
+          chosen for low latency and cost on high-volume mailbox traffic.</p>
+          <p><b>Agent runtime:</b> <b>Azure AI Foundry Agents</b>. Each agent is a named, versioned assistant with its
+          own system prompt and tools; the app resolves them by name at run time via the Azure AI Agents SDK.</p>
+          <p><b>OCR:</b> <b>Azure AI Document Intelligence</b> (<code>prebuilt-layout</code>, markdown output) turns scanned
+          PDFs and images into text the agents can read.</p>
+          <p><b>Auth:</b> Microsoft Entra <b>managed identity</b> only — no keys. Blob shared-key access is disabled.</p>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>⚛ The core design principle</h2>
+        <div class="body">
+          <div class="callout"><b>The LLM proposes; deterministic code decides.</b><br>
+          Agents do the fuzzy, language-heavy work — reading documents, aligning fields that are worded
+          differently. Plain Python then makes the final, repeatable decision (scoring, formatting, thresholds).</div>
+          <p style="margin-top:12px">Example: in onboarding, <code>form-compare-ks</code> <i>aligns</i> the two forms
+          semantically, but a deterministic scorer applies fixed thresholds (≥0.95 = match, ≥0.80 = near, else
+          mismatch) so the same forms always yield the same verdict — essential for an auditable process.</p>
+        </div>
+      </section>
+    </div>
+
+    <section class="card">
+      <h2>⬡ The agent team</h2>
+      <div class="body">
+        <table>
+          <thead><tr><th>Agent</th><th>Role</th><th>Tools</th></tr></thead>
+          <tbody>
+            <tr><td><b>orchestrator-ks</b></td><td>Reads each email and classifies its intent (contract note / merchant pre-onboarding / manual). Routes to the right specialist.</td><td>function tool (<code>run_contract_pipeline</code>)</td></tr>
+            <tr><td><b>contract-note-ks</b></td><td>Extracts trades from broker contract-note attachments, resolves security identifiers, and produces the pipe-delimited upload file.</td><td>code interpreter</td></tr>
+            <tr><td><b>pre-onboarding-ks</b></td><td>Reads merchant onboarding documents and extracts KYC, registration, address and bank fields.</td><td>none (pure extraction)</td></tr>
+            <tr><td><b>form-compare-ks</b></td><td>Aligns two versions of a merchant form (web-portal vs handwritten) field-by-field for cross-verification.</td><td>none</td></tr>
+            <tr><td><b>form-verification-ks</b></td><td>Validates extracted fields — required-field and format/regex checks — and returns a pass/fail verdict.</td><td>code interpreter</td></tr>
+            <tr><td><b>manual-intervention-ks</b></td><td>Flags anything that doesn’t fit an automated path and routes it for a human.</td><td>none</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>➤ How a message flows, end to end</h2>
+      <div class="body">
+        <ol class="steps">
+          <li><b>Email arrives</b> A new mail hits the Office 365 inbox and triggers the <code>logic-email-ks</code> Logic App.</li>
+          <li><b>Ingest &amp; stage</b> The Logic App saves each attachment to the <code>incoming-attachments</code> blob container and composes a JSON payload (subject, body, blob paths).</li>
+          <li><b>Classify intent</b> The orchestrator agent (<code>gpt-mini-ks</code>) reads the payload and classifies it: <code>contract_note</code>, <code>pre_onboarding</code> or <code>manual</code>.</li>
+          <li><b>Route to a specialist</b> Code-driven routing hands the work to the matching agent — the model decides the intent, the app decides the wiring.</li>
+          <li><b>Do the work</b> &nbsp;• <b>Contract note:</b> OCR → extract trades → resolve identifiers → build the pipe-delimited file.<br>&nbsp;• <b>Onboarding (demo):</b> OCR both forms → agent aligns fields → deterministic scorer computes match % and flags mismatches.</li>
+          <li><b>Write output</b> The result lands in the <code>contract-notes-output</code> container (a <code>.txt</code> report + machine <code>.json</code>).</li>
+          <li><b>Observe</b> Every step is streamed to this dashboard over Server-Sent Events and saved as a replayable trace.</li>
+        </ol>
+      </div>
+    </section>
+
+    <div class="about-cards">
+      <section class="card">
+        <h2>🗂 Inputs, outputs &amp; storage</h2>
+        <div class="body">
+          <p><b>Input:</b> <code>incoming-attachments</code> — raw email attachments.</p>
+          <p><b>Demo forms:</b> <code>onboarding</code> — the two fixed sample forms used for the onboarding comparison.</p>
+          <p><b>Output:</b> <code>contract-notes-output</code> — generated upload files and onboarding reports.</p>
+          <p class="meta">All access is via managed identity; nothing is read from or written with account keys.</p>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>🛠 Tech stack &amp; security</h2>
+        <div class="body">
+          <div class="pill-row">
+            <span>Azure AI Foundry</span><span>Foundry Agents SDK</span><span>Document Intelligence</span>
+            <span>Azure Blob Storage</span><span>Logic Apps (O365)</span><span>FastAPI</span>
+            <span>Server-Sent Events</span><span>Managed Identity</span>
+          </div>
+          <p style="margin-top:12px"><b>Security posture:</b> keyless auth end-to-end (Entra managed identity), storage shared-key
+          disabled, the dev server bound to localhost only, and the subscription id is read live at runtime — never
+          written to disk or committed.</p>
+        </div>
+      </section>
+    </div>
+
+    <div class="footnote">Proof-of-concept. Browser automation to the external onboarding application is intentionally simulated; the agent pipeline and outputs are real.</div>
   </div>
 
 <script>
@@ -594,14 +717,18 @@ $("#refreshLA").onclick = loadLA;
 
 function switchTab(which){
   const live = which==="live";
+  const about = which==="about";
   $("#viewLive").style.display = live ? "" : "none";
-  $("#viewOverview").style.display = live ? "none" : "";
+  $("#viewOverview").style.display = (!live && !about) ? "" : "none";
+  $("#viewAbout").style.display = about ? "" : "none";
   $("#tabLive").classList.toggle("active", live);
-  $("#tabOverview").classList.toggle("active", !live);
-  if(!live) loadOverview();
+  $("#tabOverview").classList.toggle("active", !live && !about);
+  $("#tabAbout").classList.toggle("active", about);
+  if(which==="overview") loadOverview();
 }
 $("#tabLive").onclick = ()=>switchTab("live");
 $("#tabOverview").onclick = ()=>switchTab("overview");
+$("#tabAbout").onclick = ()=>switchTab("about");
 
 async function loadOverview(){
   try{
