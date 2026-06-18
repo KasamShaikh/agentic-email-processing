@@ -286,6 +286,15 @@ let activeNode = null;
 // classified intent -> the specialist node to light up on the routing map
 const INTENT_NODE = { contract_note:"contract-note-ks", pre_onboarding:"pre-onboarding-ks", manual:"manual-intervention-ks" };
 function clearSampleSelection(){ document.querySelectorAll(".sample-btn").forEach(x=>x.classList.remove("active")); }
+// Reset every specialist node except the one the orchestrator actually chose, so
+// the routing map never shows two specialists lit at once.
+function clearSpecialistsExcept(keep){
+  ["contract-note-ks","pre-onboarding-ks","form-verification-ks","manual-intervention-ks"].forEach(n=>{
+    if(n===keep) return;
+    const el = $(`.node[data-node="${n}"]`);
+    if(el){ el.classList.remove("fired"); const c=el.querySelector(".chip"); if(c) c.textContent="idle"; }
+  });
+}
 
 function fmtTime(ts){ return new Date(ts*1000).toLocaleTimeString(); }
 function setNode(name, cls){ const n = $(`.node[data-node="${name}"]`); if(!n) return; n.classList.add("fired"); const c=n.querySelector(".chip"); if(c) c.textContent = cls||"fired"; }
@@ -362,11 +371,17 @@ function handleEvent(ev, btn){
       case "status":
         setStatus(ev.status);
         break;
-      case "intent":
+      case "intent": {
         activeNode = INTENT_NODE[ev.intent] || "manual-intervention-ks";
-        setNode(activeNode,"routed");
+        // The classified intent is the source of truth: dim any other specialist
+        // node (e.g. a contract tool-call that fired earlier in the same run) and
+        // keep only this one lit. Don't downgrade it if it already shows output.
+        clearSpecialistsExcept(activeNode);
+        const inode = $(`.node[data-node="${activeNode}"]`);
+        if(!(inode && inode.classList.contains("fired"))) setNode(activeNode,"routed");
         addEvent("orch","◆ Intent classified", `<span class="tag">${ev.label||ev.intent}</span>${ev.reason?`<br><span class="meta">${escapeHtml(ev.reason)}</span>`:""}`, ev.ts);
         break;
+      }
       case "agent_called": {
         // Light the node for this agent; if the agent has no node of its own
         // (e.g. form-compare-ks runs under the onboarding path), light the

@@ -532,6 +532,11 @@ def _orchestrate(ag, payload_str: str, source: str = "ui"):
         return
 
     intent, reason = _parse_intent(_agent_reply(ag, thread.id))
+    # If the orchestrator already invoked the contract-note pipeline tool, the email
+    # IS a contract note — trust that over a (sometimes inconsistent) text re-parse,
+    # so we never fall through to the onboarding branch for a contract email.
+    if contract_handled:
+        intent, reason = "contract_note", "contract-note pipeline tool was invoked"
     yield _sse(
         {
             "type": "intent",
