@@ -18,11 +18,18 @@ auth is disabled by policy on this account).
 from __future__ import annotations
 
 import json
+import os
 
 from azure.identity import DefaultAzureCredential
 
-DOCINTEL_ENDPOINT = "https://agentic-email-docintel-ks.cognitiveservices.azure.com/"
-STORAGE_ACCOUNT_URL = "https://agenticemailks.blob.core.windows.net"
+DOCINTEL_ENDPOINT = os.getenv(
+    "DOCINTEL_ENDPOINT",
+    "https://agentic-email-docintel-ks.cognitiveservices.azure.com/",
+)
+STORAGE_ACCOUNT_URL = os.getenv(
+    "STORAGE_ACCOUNT_URL",
+    "https://agenticemailks.blob.core.windows.net",
+)
 DEFAULT_CONTAINER = "incoming-attachments"
 
 # File types that already hold digital text — skip Document Intelligence for these.

@@ -36,12 +36,16 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 # --------------------------------------------------------------------------- #
-# Configuration
+# Configuration  (env-driven so the same code runs locally and on App Service;
+# the defaults are the live values for local `az login` development)
 # --------------------------------------------------------------------------- #
-ENDPOINT = "https://agentic-email-foundry-ks.services.ai.azure.com/api/projects/email-agentic-ks"
-ORCHESTRATOR_NAME = "orchestrator-ks"
-RESOURCE_GROUP = "agentic-email-processing"
-LOGIC_APP_NAME = "logic-email-ks"
+ENDPOINT = os.getenv(
+    "FOUNDRY_PROJECT_ENDPOINT",
+    "https://agentic-email-foundry-ks.services.ai.azure.com/api/projects/email-agentic-ks",
+)
+ORCHESTRATOR_NAME = os.getenv("ORCHESTRATOR_NAME", "orchestrator-ks")
+RESOURCE_GROUP = os.getenv("RESOURCE_GROUP", "agentic-email-processing")
+LOGIC_APP_NAME = os.getenv("LOGIC_APP_NAME", "logic-email-ks")
 
 # connected-agent tool name -> the agent it represents
 TOOL_TO_AGENT = {
@@ -96,6 +100,15 @@ app = FastAPI(title="Agentic Email Processing Dashboard")
 
 _credential = DefaultAzureCredential()
 _client: AgentsClient | None = None
+
+
+def _arm_get(url: str, timeout: int = 60) -> dict:
+    """GET an Azure Resource Manager URL using the managed-identity / logged-in
+    token — no `az` CLI required (App Service has no CLI on PATH)."""
+    token = _credential.get_token("https://management.azure.com/.default").token
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+        return json.loads(resp.read().decode("utf-8"))
 
 
 def client() -> AgentsClient:
@@ -170,23 +183,20 @@ def _load_trace(run_name: str) -> dict | None:
 
 def _list_logicapp_runs(top: int = 10) -> list[dict]:
     """Recent Logic App runs as [{name, status, startTime, endTime}], or []."""
-    az = _az()
     sub = _sub()
-    if not az or not sub:
+    if not sub:
         return []
     url = (
         f"https://management.azure.com/subscriptions/{sub}/resourceGroups/"
         f"{RESOURCE_GROUP}/providers/Microsoft.Logic/workflows/{LOGIC_APP_NAME}/"
         "runs?api-version=2016-06-01"
     )
-    res = subprocess.run(
-        [az, "rest", "--method", "get", "--url", url],
-        capture_output=True, text=True, timeout=60, shell=False,
-    )
-    if res.returncode != 0:
+    try:
+        data = _arm_get(url)
+    except Exception:  # noqa: BLE001
         return []
     runs = []
-    for r in json.loads(res.stdout or "{}").get("value", [])[:top]:
+    for r in data.get("value", [])[:top]:
         p = r.get("properties", {})
         runs.append(
             {
@@ -677,6 +687,9 @@ def _orchestrate(ag, payload_str: str, source: str = "ui"):
 
 
 def _sub() -> str | None:
+    env = os.getenv("AZURE_SUBSCRIPTION_ID")
+    if env:
+        return env
     az = _az()
     if not az:
         return None
@@ -710,21 +723,18 @@ def _clean_text(s, limit: int = 4000) -> str:
 def _reconstruct_email_from_run(run_name: str) -> dict | None:
     """Rebuild the email payload from a Logic App run's outputs — no workflow change
     needed. Accepts attachments of ANY format (read straight from the email)."""
-    az = _az()
     sub = _sub()
-    if not az or not sub:
+    if not sub:
         return None
     base = (
         f"https://management.azure.com/subscriptions/{sub}/resourceGroups/"
         f"{RESOURCE_GROUP}/providers/Microsoft.Logic/workflows/{LOGIC_APP_NAME}/runs/{run_name}"
     )
-    run_res = subprocess.run(
-        [az, "rest", "--method", "get", "--url", f"{base}?api-version=2016-06-01"],
-        capture_output=True, text=True, timeout=60, shell=False,
-    )
-    if run_res.returncode != 0:
+    try:
+        run_props = _arm_get(f"{base}?api-version=2016-06-01")
+    except Exception:  # noqa: BLE001
         return None
-    trig = json.loads(run_res.stdout or "{}").get("properties", {}).get("trigger", {})
+    trig = run_props.get("properties", {}).get("trigger", {})
 
     payload = {
         "subject": "(no subject)",
@@ -761,23 +771,19 @@ def _reconstruct_email_from_run(run_name: str) -> dict | None:
 
     # Best-effort enhancement: the composed payload (exact body + saved blob paths).
     try:
-        act_res = subprocess.run(
-            [az, "rest", "--method", "get", "--url", f"{base}/actions?api-version=2016-06-01"],
-            capture_output=True, text=True, timeout=60, shell=False,
-        )
-        if act_res.returncode == 0:
-            for a in json.loads(act_res.stdout or "{}").get("value", []):
-                if a.get("name") == "Compose_payload":
-                    olink = (a.get("properties", {}).get("outputsLink") or {}).get("uri")
-                    if olink:
-                        raw = _fetch_link_json(olink)
-                        cval = raw
-                        if isinstance(raw, dict) and "subject" not in raw and isinstance(raw.get("body"), dict):
-                            cval = raw["body"]
-                        if isinstance(cval, dict) and "subject" in cval:
-                            payload["body"] = cval.get("body") or payload["body"]
-                            payload["attachmentBlobs"] = cval.get("attachmentBlobs") or payload["attachmentBlobs"]
-                    break
+        act_data = _arm_get(f"{base}/actions?api-version=2016-06-01")
+        for a in act_data.get("value", []):
+            if a.get("name") == "Compose_payload":
+                olink = (a.get("properties", {}).get("outputsLink") or {}).get("uri")
+                if olink:
+                    raw = _fetch_link_json(olink)
+                    cval = raw
+                    if isinstance(raw, dict) and "subject" not in raw and isinstance(raw.get("body"), dict):
+                        cval = raw["body"]
+                    if isinstance(cval, dict) and "subject" in cval:
+                        payload["body"] = cval.get("body") or payload["body"]
+                        payload["attachmentBlobs"] = cval.get("attachmentBlobs") or payload["attachmentBlobs"]
+                break
     except Exception:  # noqa: BLE001
         pass
 
@@ -822,11 +828,8 @@ def api_samples():
 def api_logicapp_runs():
     """Recent real Logic App runs (the actual email triggers)."""
     try:
-        az = _az()
-        if not az:
-            return JSONResponse({"runs": [], "error": "Azure CLI (az) not found on PATH."})
         if not _sub():
-            return JSONResponse({"runs": [], "error": "Not logged in (az login)."})
+            return JSONResponse({"runs": [], "error": "AZURE_SUBSCRIPTION_ID not set (or not logged in via az)."})
         return {"runs": _list_logicapp_runs(10)}
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"runs": [], "error": str(exc)[:300]})
@@ -838,27 +841,18 @@ def api_logicapp_run_actions(run_name: str):
     if not re.fullmatch(r"[A-Za-z0-9]+", run_name or ""):
         return JSONResponse({"error": "invalid run name"}, status_code=400)
     try:
-        az = _az()
-        if not az:
-            return JSONResponse({"error": "Azure CLI (az) not found on PATH."})
-        sub = subprocess.run(
-            [az, "account", "show", "--query", "id", "-o", "tsv"],
-            capture_output=True, text=True, timeout=30, shell=False,
-        ).stdout.strip()
+        sub = _sub()
         if not sub:
-            return JSONResponse({"error": "Not logged in (az login)."})
+            return JSONResponse({"error": "AZURE_SUBSCRIPTION_ID not set (or not logged in via az)."})
         base = (
             f"https://management.azure.com/subscriptions/{sub}/resourceGroups/"
             f"{RESOURCE_GROUP}/providers/Microsoft.Logic/workflows/{LOGIC_APP_NAME}/"
             f"runs/{run_name}"
         )
-        run_res = subprocess.run(
-            [az, "rest", "--method", "get", "--url", f"{base}?api-version=2016-06-01"],
-            capture_output=True, text=True, timeout=60, shell=False,
-        )
-        if run_res.returncode != 0:
-            return JSONResponse({"error": run_res.stderr.strip()[:300]})
-        run = json.loads(run_res.stdout or "{}").get("properties", {})
+        try:
+            run = _arm_get(f"{base}?api-version=2016-06-01").get("properties", {})
+        except Exception as exc:  # noqa: BLE001
+            return JSONResponse({"error": str(exc)[:300]})
         trig = run.get("trigger", {})
 
         # best-effort: read the trigger outputs to surface the email subject/from
@@ -883,23 +877,22 @@ def api_logicapp_run_actions(run_name: str):
             pass
 
         actions = []
-        act_res = subprocess.run(
-            [az, "rest", "--method", "get", "--url", f"{base}/actions?api-version=2016-06-01"],
-            capture_output=True, text=True, timeout=60, shell=False,
-        )
-        if act_res.returncode == 0:
-            for a in json.loads(act_res.stdout or "{}").get("value", []):
-                p = a.get("properties", {})
-                actions.append(
-                    {
-                        "name": a.get("name"),
-                        "status": p.get("status"),
-                        "start": p.get("startTime"),
-                        "end": p.get("endTime"),
-                        "code": p.get("code"),
-                    }
-                )
-            actions.sort(key=lambda x: x.get("start") or "")
+        try:
+            act_data = _arm_get(f"{base}/actions?api-version=2016-06-01")
+        except Exception:  # noqa: BLE001
+            act_data = {}
+        for a in act_data.get("value", []):
+            p = a.get("properties", {})
+            actions.append(
+                {
+                    "name": a.get("name"),
+                    "status": p.get("status"),
+                    "start": p.get("startTime"),
+                    "end": p.get("endTime"),
+                    "code": p.get("code"),
+                }
+            )
+        actions.sort(key=lambda x: x.get("start") or "")
 
         return {
             "runName": run_name,
