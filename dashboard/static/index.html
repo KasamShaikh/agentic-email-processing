@@ -117,6 +117,12 @@
   .about-cards { display:grid; grid-template-columns: 1fr 1fr; gap:18px; }
   @media (max-width:760px){ .about-cards{ grid-template-columns:1fr; } }
   .callout { background:#fdf2f7; border-left:4px solid var(--magenta); border-radius:10px; padding:12px 14px; font-size:13px; line-height:1.55; }
+  .arch { width:100%; height:auto; display:block; }
+  .arch .bx { fill:#fff; stroke:var(--line); stroke-width:1.5; }
+  .arch .t { fill:var(--ink); font-size:13px; font-weight:600; }
+  .arch .s { fill:var(--muted); font-size:10.5px; }
+  .arch .lbl { fill:var(--maroon); font-size:10px; font-weight:700; letter-spacing:.3px; }
+  .arch .ln { stroke:#caa9b8; stroke-width:1.6; fill:none; }
 
   /* flow diagram */
   .flow { display:flex; flex-direction:column; gap:10px; }
@@ -311,6 +317,84 @@
         merchant’s onboarding forms — and writes a clean, auditable output file back to storage.</p>
         <p>This screen is the live operations view: the centre panel streams every step in real time, the routing
         map on the right shows which agent fired, and the Logic App panel lists the real email-triggered runs.</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>▤ High-level architecture</h2>
+      <div class="body">
+        <svg class="arch" viewBox="0 0 960 560" role="img" aria-label="High-level architecture flow diagram">
+          <defs>
+            <linearGradient id="og" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stop-color="#7A0F3E"/><stop offset="1" stop-color="#E5007D"/>
+            </linearGradient>
+            <marker id="ah" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+              <path d="M0,0 L7,3 L0,6 Z" fill="#b56b90"/>
+            </marker>
+          </defs>
+
+          <!-- ingestion row -->
+          <rect class="bx" x="30" y="24" width="250" height="52" rx="12"/>
+          <text class="t" x="155" y="54" text-anchor="middle">✉ Office 365 Inbox</text>
+          <rect class="bx" x="355" y="24" width="250" height="52" rx="12"/>
+          <text class="t" x="480" y="48" text-anchor="middle">Logic App</text>
+          <text class="s" x="480" y="64" text-anchor="middle">logic-email-ks · ingest</text>
+          <rect class="bx" x="680" y="24" width="250" height="52" rx="12"/>
+          <text class="t" x="805" y="48" text-anchor="middle">Blob Storage</text>
+          <text class="s" x="805" y="64" text-anchor="middle">incoming-attachments</text>
+          <path class="ln" d="M280,50 H352" marker-end="url(#ah)"/>
+          <path class="ln" d="M605,50 H677" marker-end="url(#ah)"/>
+
+          <!-- orchestrator -->
+          <rect x="300" y="118" width="360" height="64" rx="14" fill="url(#og)"/>
+          <text x="480" y="146" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">Orchestrator Agent · gpt-mini-ks</text>
+          <text x="480" y="166" text-anchor="middle" fill="#fff" font-size="11" opacity=".9">reads the email &amp; classifies the intent</text>
+          <path class="ln" d="M480,76 V116" marker-end="url(#ah)"/>
+          <text class="lbl" x="490" y="101">payload</text>
+
+          <!-- routing -->
+          <path class="ln" d="M480,182 V206 H165 V230" marker-end="url(#ah)"/>
+          <text class="lbl" x="250" y="200" text-anchor="middle">contract_note</text>
+          <path class="ln" d="M480,182 V230" marker-end="url(#ah)"/>
+          <text class="lbl" x="545" y="205" text-anchor="middle">pre_onboarding</text>
+          <path class="ln" d="M480,182 V206 H795 V230" marker-end="url(#ah)"/>
+          <text class="lbl" x="712" y="200" text-anchor="middle">manual</text>
+
+          <!-- contract lane -->
+          <rect class="bx" x="30" y="232" width="270" height="54" rx="12"/>
+          <text class="t" x="165" y="256" text-anchor="middle">Contract Note Agent</text>
+          <text class="s" x="165" y="272" text-anchor="middle">extract trades · resolve IDs</text>
+          <rect class="bx" x="30" y="314" width="270" height="48" rx="12"/>
+          <text class="t" x="165" y="343" text-anchor="middle">Document Intelligence · OCR</text>
+          <path class="ln" d="M165,286 V312" marker-end="url(#ah)"/>
+
+          <!-- onboarding lane -->
+          <rect class="bx" x="345" y="232" width="270" height="54" rx="12"/>
+          <text class="t" x="480" y="256" text-anchor="middle">Pre-Onboarding Agent</text>
+          <text class="s" x="480" y="272" text-anchor="middle">extract merchant fields</text>
+          <rect class="bx" x="345" y="304" width="270" height="46" rx="12"/>
+          <text class="t" x="480" y="332" text-anchor="middle">Form Comparison Agent</text>
+          <rect class="bx" x="345" y="366" width="270" height="46" rx="12"/>
+          <text class="t" x="480" y="394" text-anchor="middle">Form Verification Agent</text>
+          <path class="ln" d="M480,286 V304" marker-end="url(#ah)"/>
+          <path class="ln" d="M480,350 V366" marker-end="url(#ah)"/>
+
+          <!-- manual lane -->
+          <rect class="bx" x="660" y="232" width="270" height="54" rx="12"/>
+          <text class="t" x="795" y="256" text-anchor="middle">Manual Intervention Agent</text>
+          <text class="s" x="795" y="272" text-anchor="middle">flag for a human</text>
+          <rect class="bx" x="660" y="314" width="270" height="48" rx="12"/>
+          <text class="t" x="795" y="343" text-anchor="middle">Human review queue</text>
+          <path class="ln" d="M795,286 V312" marker-end="url(#ah)"/>
+
+          <!-- output -->
+          <rect class="bx" x="240" y="470" width="480" height="58" rx="14"/>
+          <text class="t" x="480" y="496" text-anchor="middle">Blob Storage · contract-notes-output</text>
+          <text class="s" x="480" y="514" text-anchor="middle">PIS upload file · onboarding report (.txt + .json)</text>
+          <path class="ln" d="M165,362 V455 H360 V468" marker-end="url(#ah)"/>
+          <path class="ln" d="M480,412 V468" marker-end="url(#ah)"/>
+        </svg>
+        <p class="meta" style="margin-top:10px">Email in → Logic App stages attachments to Blob → the orchestrator (gpt-mini-ks) classifies the intent → code routes to a specialist → the result is written back to Blob. Every call uses Entra managed identity — no keys.</p>
       </div>
     </section>
 
