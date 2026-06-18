@@ -289,8 +289,9 @@ function clearSampleSelection(){ document.querySelectorAll(".sample-btn").forEac
 // Reset every specialist node except the one the orchestrator actually chose, so
 // the routing map never shows two specialists lit at once.
 function clearSpecialistsExcept(keep){
+  const keepers = Array.isArray(keep) ? keep : [keep];
   ["contract-note-ks","pre-onboarding-ks","form-verification-ks","manual-intervention-ks"].forEach(n=>{
-    if(n===keep) return;
+    if(keepers.includes(n)) return;
     const el = $(`.node[data-node="${n}"]`);
     if(el){ el.classList.remove("fired"); const c=el.querySelector(".chip"); if(c) c.textContent="idle"; }
   });
@@ -373,10 +374,12 @@ function handleEvent(ev, btn){
         break;
       case "intent": {
         activeNode = INTENT_NODE[ev.intent] || "manual-intervention-ks";
-        // The classified intent is the source of truth: dim any other specialist
-        // node (e.g. a contract tool-call that fired earlier in the same run) and
-        // keep only this one lit. Don't downgrade it if it already shows output.
-        clearSpecialistsExcept(activeNode);
+        // The classified intent is the source of truth. For onboarding we keep BOTH
+        // the Pre-Onboarding and Form Verification nodes lit, because the form
+        // comparison is shown as the validation step in this demo.
+        const keep = ev.intent === "pre_onboarding"
+          ? ["pre-onboarding-ks","form-verification-ks"] : activeNode;
+        clearSpecialistsExcept(keep);
         const inode = $(`.node[data-node="${activeNode}"]`);
         if(!(inode && inode.classList.contains("fired"))) setNode(activeNode,"routed");
         addEvent("orch","◆ Intent classified", `<span class="tag">${ev.label||ev.intent}</span>${ev.reason?`<br><span class="meta">${escapeHtml(ev.reason)}</span>`:""}`, ev.ts);
@@ -423,10 +426,12 @@ function handleEvent(ev, btn){
         break;
       case "compared":
         setNode(activeNode||"pre-onboarding-ks","comparing");
+        setNode("form-verification-ks","validating");
         addEvent("agent","⚖ Forms compared", `<span class="tag">${escapeHtml(ev.status||"")}</span> match <b>${ev.matchPct}%</b> · <span class="meta">${ev.matched||0} matched · ${ev.near||0} near · ${ev.mismatched||0} mismatched (of ${ev.total||0})</span>`, ev.ts);
         break;
       case "onboarding_done":
         setNode(activeNode||"pre-onboarding-ks","output");
+        setNode("form-verification-ks", ev.status || "validated");
         { let ob = `Verdict <b>${escapeHtml(ev.status||"")}</b>${ev.matchPct!=null?` · match <b>${ev.matchPct}%</b>`:""}`;
           if (ev.warnings&&ev.warnings.length) ob += `<div class="err">⚠ ${ev.warnings.map(w=>escapeHtml(w)).join("<br>")}</div>`;
           addEvent("agent","▣ Onboarding complete", ob, ev.ts); }
