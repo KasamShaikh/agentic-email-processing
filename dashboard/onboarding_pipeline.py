@@ -3,10 +3,9 @@ Merchant-onboarding form-verification pipeline.
 
 For a pre-onboarding email with two attachments — a WEB-UI form (portal screenshot or
 JSON export) and a HANDWRITTEN form (scanned image) — this pipeline:
-  1. downloads both files from `incoming-attachments` (managed identity — shared-key
-     auth is disabled by policy on this account),
-  2. turns each into text: Azure AI Document Intelligence (`prebuilt-layout`, markdown)
-     for images/PDFs, or direct decode for `.json`,
+  1. downloads both files (managed identity — shared-key auth is disabled by policy),
+  2. turns each into text via the shared, type-aware `doc_extract.extract_text`
+     (Document Intelligence for images/PDFs, direct decode for JSON/CSV/text),
   3. has `form-compare-ks` extract and ALIGN the fields across the two forms,
   4. scores the alignment deterministically (form_compare.py) into a match % + a
      match / near / mismatch verdict per field,
@@ -24,92 +23,40 @@ import re
 import time
 from typing import Callable, Iterator
 
-from azure.identity import DefaultAzureCredential
-
 import form_compare as fcmp
+from doc_extract import (
+    blob_basename,
+    download_blob,
+    extract_text,
+    upload_text,
+)
 
-DOCINTEL_ENDPOINT = "https://agentic-email-docintel-ks.cognitiveservices.azure.com/"
-STORAGE_ACCOUNT_URL = "https://agenticemailks.blob.core.windows.net"
-INPUT_CONTAINER = "incoming-attachments"
 OUTPUT_CONTAINER = "contract-notes-output"
 OUTPUT_PREFIX = "onboarding/"
 
-# Demo: onboarding always runs against the two fixed sample forms kept under this
-# folder in the input container (a web-UI form + a handwritten form). Drop any two
-# files here and the flow uses them, whether triggered by an email or the UI button.
-DEMO_PREFIX = "onboarding-samples/"
-
-_credential = DefaultAzureCredential()
-_blob_service = None
-_doc_client = None
+# Demo: onboarding always runs against the two fixed sample forms kept in this
+# dedicated container (a web-UI form + a handwritten form). Drop any two files here
+# and the flow uses them, whether triggered by an email or the UI button.
+DEMO_CONTAINER = "onboarding"
 
 # Filename hints used to tell the two forms apart.
 _WEB_HINTS = ("web", "ui", "portal", "screen", "json", "online")
 _HAND_HINTS = ("hand", "scan", "written", "manual", "paper")
 
 
-def _blob():
-    global _blob_service
-    if _blob_service is None:
-        from azure.storage.blob import BlobServiceClient
-
-        _blob_service = BlobServiceClient(STORAGE_ACCOUNT_URL, credential=_credential)
-    return _blob_service
-
-
-def _docintel():
-    global _doc_client
-    if _doc_client is None:
-        from azure.ai.documentintelligence import DocumentIntelligenceClient
-
-        _doc_client = DocumentIntelligenceClient(DOCINTEL_ENDPOINT, credential=_credential)
-    return _doc_client
-
-
-def _blob_name(path: str) -> str:
-    p = (path or "").lstrip("/")
-    prefix = f"{INPUT_CONTAINER}/"
-    return p[len(prefix):] if p.startswith(prefix) else p
-
-
 def demo_attachments() -> list[str]:
-    """List the fixed demo onboarding forms kept under
-    `incoming-attachments/onboarding-samples/` (a web-UI form + a handwritten form).
+    """List the fixed demo onboarding forms kept in the `onboarding` container
+    (a web-UI form + a handwritten form).
 
-    Returns full container-qualified paths, sorted by name. Empty list if the folder
-    holds no files, in which case callers fall back to the email's own attachments.
+    Returns container-qualified paths (`onboarding/<name>`), sorted by name. Empty
+    list if the container holds no files, in which case callers fall back to the
+    email's own attachments.
     """
-    container = _blob().get_container_client(INPUT_CONTAINER)
-    names = [
-        b.name
-        for b in container.list_blobs(name_starts_with=DEMO_PREFIX)
-        if not b.name.endswith("/")
-    ]
-    return [f"{INPUT_CONTAINER}/{n}" for n in sorted(names)]
+    from doc_extract import _blob  # shared blob service client
 
-
-def download_attachment(path: str) -> bytes:
-    name = _blob_name(path)
-    client = _blob().get_blob_client(container=INPUT_CONTAINER, blob=name)
-    return client.download_blob().readall()
-
-
-def analyze_document(data: bytes) -> str:
-    from azure.ai.documentintelligence.models import AnalyzeDocumentRequest
-
-    poller = _docintel().begin_analyze_document(
-        "prebuilt-layout",
-        AnalyzeDocumentRequest(bytes_source=data),
-        output_content_format="markdown",
-    )
-    return poller.result().content or ""
-
-
-def upload_output(name: str, text: str) -> str:
-    blob = f"{OUTPUT_PREFIX}{name}"
-    client = _blob().get_blob_client(container=OUTPUT_CONTAINER, blob=blob)
-    client.upload_blob(text.encode("utf-8"), overwrite=True)
-    return f"{STORAGE_ACCOUNT_URL}/{OUTPUT_CONTAINER}/{blob}"
+    container = _blob().get_container_client(DEMO_CONTAINER)
+    names = [b.name for b in container.list_blobs() if not b.name.endswith("/")]
+    return [f"{DEMO_CONTAINER}/{n}" for n in sorted(names)]
 
 
 def _parse_json(text: str) -> dict | None:
@@ -128,7 +75,7 @@ def _classify(paths: list[str]) -> tuple[str | None, str | None, list[str]]:
     warnings: list[str] = []
     web, hand = None, None
     for p in paths:
-        low = _blob_name(p).lower()
+        low = blob_basename(p).lower()
         if web is None and any(h in low for h in _WEB_HINTS):
             web = p
         elif hand is None and any(h in low for h in _HAND_HINTS):
@@ -137,22 +84,11 @@ def _classify(paths: list[str]) -> tuple[str | None, str | None, list[str]]:
     leftovers = [p for p in paths if p not in (web, hand)]
     if web is None and leftovers:
         web = leftovers.pop(0)
-        warnings.append(f"Could not identify the web-UI form by name; using '{_blob_name(web)}'.")
+        warnings.append(f"Could not identify the web-UI form by name; using '{blob_basename(web)}'.")
     if hand is None and leftovers:
         hand = leftovers.pop(0)
-        warnings.append(f"Could not identify the handwritten form by name; using '{_blob_name(hand)}'.")
+        warnings.append(f"Could not identify the handwritten form by name; using '{blob_basename(hand)}'.")
     return web, hand, warnings
-
-
-def _extract_text(path: str) -> str:
-    """OCR an image/PDF, or decode a JSON attachment directly."""
-    data = download_attachment(path)
-    if _blob_name(path).lower().endswith(".json"):
-        try:
-            return json.dumps(json.loads(data.decode("utf-8")), indent=2)
-        except Exception:  # noqa: BLE001
-            return data.decode("utf-8", "ignore")
-    return analyze_document(data)
 
 
 def process(
@@ -181,17 +117,17 @@ def process(
     warnings.extend(cls_warnings)
     yield {
         "type": "forms_identified",
-        "web_ui": _blob_name(web_path) if web_path else None,
-        "handwritten": _blob_name(hand_path) if hand_path else None,
+        "web_ui": blob_basename(web_path) if web_path else None,
+        "handwritten": blob_basename(hand_path) if hand_path else None,
         "ts": time.time(),
     }
 
     try:
-        web_text = _extract_text(web_path)
-        yield {"type": "extracted", "name": _blob_name(web_path), "role": "web_ui",
+        web_text = extract_text(web_path)
+        yield {"type": "extracted", "name": blob_basename(web_path), "role": "web_ui",
                "chars": len(web_text), "ts": time.time()}
-        hand_text = _extract_text(hand_path)
-        yield {"type": "extracted", "name": _blob_name(hand_path), "role": "handwritten",
+        hand_text = extract_text(hand_path)
+        yield {"type": "extracted", "name": blob_basename(hand_path), "role": "handwritten",
                "chars": len(hand_text), "ts": time.time()}
     except Exception as exc:  # noqa: BLE001
         yield {"type": "onboarding_done", "files": [],
@@ -224,8 +160,8 @@ def process(
     )
     merchant = (data_obj.get("merchant_name") or "").strip()
     meta = {
-        "web_ui_file": _blob_name(web_path) if web_path else "",
-        "handwritten_file": _blob_name(hand_path) if hand_path else "",
+        "web_ui_file": blob_basename(web_path) if web_path else "",
+        "handwritten_file": blob_basename(hand_path) if hand_path else "",
     }
     verdict = fcmp.result_to_dict(result)
     yield {
@@ -250,7 +186,7 @@ def process(
         (f"ONBOARDING_{safe}_{stamp}.json", report_json),
     ):
         try:
-            url = upload_output(fname, text)
+            url = upload_text(OUTPUT_CONTAINER, f"{OUTPUT_PREFIX}{fname}", text)
             written.append({"file": fname, "url": url, "lines": text.count("\n")})
             yield {"type": "output_written", "file": fname, "url": url,
                    "preview": text[:600], "ts": time.time()}

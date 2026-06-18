@@ -22,42 +22,22 @@ import re
 import time
 from typing import Callable, Iterator
 
-from azure.identity import DefaultAzureCredential
-
 from contract_format import (
     ContractNote,
     group_and_format,
     load_security_master,
     note_from_dict,
 )
+from doc_extract import (
+    blob_basename,
+    download_blob,
+    extract_text,
+    upload_text,
+)
 
-DOCINTEL_ENDPOINT = "https://agentic-email-docintel-ks.cognitiveservices.azure.com/"
-STORAGE_ACCOUNT_URL = "https://agenticemailks.blob.core.windows.net"
-INPUT_CONTAINER = "incoming-attachments"
 OUTPUT_CONTAINER = "contract-notes-output"
 
-_credential = DefaultAzureCredential()
-_blob_service = None
-_doc_client = None
 _master: dict[str, str] | None = None
-
-
-def _blob():
-    global _blob_service
-    if _blob_service is None:
-        from azure.storage.blob import BlobServiceClient
-
-        _blob_service = BlobServiceClient(STORAGE_ACCOUNT_URL, credential=_credential)
-    return _blob_service
-
-
-def _docintel():
-    global _doc_client
-    if _doc_client is None:
-        from azure.ai.documentintelligence import DocumentIntelligenceClient
-
-        _doc_client = DocumentIntelligenceClient(DOCINTEL_ENDPOINT, credential=_credential)
-    return _doc_client
 
 
 def _security_master() -> dict[str, str]:
@@ -65,38 +45,6 @@ def _security_master() -> dict[str, str]:
     if _master is None:
         _master = load_security_master()
     return _master
-
-
-def _blob_name(path: str) -> str:
-    """`incoming-attachments/foo.pdf` -> `foo.pdf` (strip the container prefix)."""
-    p = (path or "").lstrip("/")
-    prefix = f"{INPUT_CONTAINER}/"
-    return p[len(prefix):] if p.startswith(prefix) else p
-
-
-def download_attachment(path: str) -> bytes:
-    name = _blob_name(path)
-    client = _blob().get_blob_client(container=INPUT_CONTAINER, blob=name)
-    return client.download_blob().readall()
-
-
-def analyze_document(data: bytes) -> str:
-    """Return the document content as markdown (tables preserved) via prebuilt-layout."""
-    from azure.ai.documentintelligence.models import AnalyzeDocumentRequest
-
-    poller = _docintel().begin_analyze_document(
-        "prebuilt-layout",
-        AnalyzeDocumentRequest(bytes_source=data),
-        output_content_format="markdown",
-    )
-    result = poller.result()
-    return result.content or ""
-
-
-def upload_output(name: str, text: str) -> str:
-    client = _blob().get_blob_client(container=OUTPUT_CONTAINER, blob=name)
-    client.upload_blob(text.encode("utf-8"), overwrite=True)
-    return f"{STORAGE_ACCOUNT_URL}/{OUTPUT_CONTAINER}/{name}"
 
 
 def _parse_json(text: str) -> dict | None:
@@ -133,12 +81,12 @@ def process(
         return
 
     for path in attachment_paths:
-        name = _blob_name(path)
+        name = blob_basename(path)
         try:
-            data = download_attachment(path)
+            data = download_blob(path)
             yield {"type": "attachment_fetched", "name": name, "bytes": len(data), "ts": time.time()}
 
-            content = analyze_document(data)
+            content = extract_text(path, data)
             yield {"type": "extracted", "name": name, "chars": len(content), "ts": time.time()}
 
             res = run_agent(content)
@@ -182,7 +130,7 @@ def process(
     written = []
     for fname, text in files.items():
         try:
-            url = upload_output(fname, text)
+            url = upload_text(OUTPUT_CONTAINER, fname, text)
             written.append({"file": fname, "url": url, "lines": text.count("\n")})
             yield {
                 "type": "output_written",
