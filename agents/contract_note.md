@@ -23,6 +23,7 @@ all arithmetic and formatting deterministically. Extract only what is printed.
   "stt": 0.00,
   "stamp_duty": 0.00,
   "others": 0.00,
+  "total_contract_note_amount": 0.00,
   "trades": [
     {
       "transaction_type": "P | S",
@@ -42,6 +43,14 @@ all arithmetic and formatting deterministically. Extract only what is printed.
   Buy/Sell indicator. Set both the header and each trade row.
 - `tax_amount` = total GST (SGST + CGST + IGST). `exchange_levy` = transaction /
   exchange charges. Map each charge to its closest field; use `0.00` if absent.
+  Read **every** charge line printed on the note (GST/SGST/CGST/IGST, SEBI /
+  education cess, exchange/transaction charges, STT/CTT, stamp duty, and any
+  other levies). Missing a charge makes the header total wrong, so be thorough.
+- `total_contract_note_amount` = the **net amount** printed on the contract note
+  (e.g. "Net Amount Receivable/Payable", "Bill Amount", "Net Total"). Copy the
+  printed figure as a plain positive number (no sign, no commas, no currency
+  symbol); downstream code applies the Purchase/Sales sign. Use `0.00` only if no
+  net total is printed.
 - `rate_per_scrip` = **net rate per share** before brokerage if the note shows a
   separate brokerage column; otherwise the printed rate. `brokerage_rate_per_scrip`
   = brokerage **per share** (not the total). If brokerage is shown only as a total,

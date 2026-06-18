@@ -101,17 +101,61 @@ def trade_amount(qty, rate, brokerage, ttype: str) -> Decimal:
 # --------------------------------------------------------------------------- #
 # Security master (scrip name -> ISIN)
 # --------------------------------------------------------------------------- #
+# Authoritative NSE/BSE ISIN masters shipped with the app.
+ISIN_MASTER_DIR = Path(__file__).resolve().parent / "isin_master"
+
+# Company-name suffixes/noise tokens dropped to build a robust "core" match key.
+_SUFFIX_TOKENS = {
+    "LIMITED", "LTD", "THE", "COMPANY", "CO", "CORPORATION", "CORP",
+    "INDIA", "INDIAN", "AND",
+}
+
+
 def _norm_name(name: str) -> str:
     return re.sub(r"[^A-Z0-9]+", " ", (name or "").upper()).strip()
 
 
-def load_security_master(path: Path | str | None = None) -> dict[str, str]:
-    """Load a `name|isin` (or `name,isin`) lookup keyed by normalised scrip name."""
-    p = Path(path) if path else DEFAULT_MASTER
-    table: dict[str, str] = {}
-    if not p.exists():
-        return table
-    with p.open(encoding="utf-8-sig", newline="") as fh:
+def _core_name(norm: str) -> str:
+    """Normalised name with common company suffixes/noise removed."""
+    return " ".join(t for t in norm.split() if t not in _SUFFIX_TOKENS)
+
+
+def _add_key(table: dict[str, str], key: str, isin: str) -> None:
+    key = (key or "").strip()
+    if key and isin and key not in table:
+        table[key] = isin
+
+
+def _load_exchange_master(path: Path, name_cols: list[str], isin_col: str, table: dict[str, str]) -> None:
+    """Index ISINs from an exchange master CSV by every name column (and its core)."""
+    with path.open(encoding="utf-8-sig", newline="") as fh:
+        reader = csv.reader(fh)
+        header = next(reader, None)
+        if not header:
+            return
+        idx = {(h or "").strip().upper(): i for i, h in enumerate(header)}
+        isin_i = idx.get(isin_col.upper())
+        name_is = [idx[c.upper()] for c in name_cols if c.upper() in idx]
+        if isin_i is None or not name_is:
+            return
+        for row in reader:
+            if len(row) <= isin_i:
+                continue
+            isin = (row[isin_i] or "").strip().upper()
+            if not isin.startswith("IN") or len(isin) < 12:
+                continue
+            for ni in name_is:
+                if ni < len(row):
+                    norm = _norm_name(row[ni])
+                    _add_key(table, norm, isin)
+                    core = _core_name(norm)
+                    if core and core != norm:
+                        _add_key(table, core, isin)
+
+
+def _load_seed(path: Path, table: dict[str, str]) -> None:
+    """Load the small `name|isin` seed file (overrides only missing keys)."""
+    with path.open(encoding="utf-8-sig", newline="") as fh:
         sample = fh.read(1024)
         fh.seek(0)
         delim = "|" if sample.count("|") >= sample.count(",") else ","
@@ -123,20 +167,43 @@ def load_security_master(path: Path | str | None = None) -> dict[str, str]:
                 continue
             if name.lower() in {"scrip_name", "name", "symbol"}:
                 continue
-            table[_norm_name(name)] = isin
+            norm = _norm_name(name)
+            _add_key(table, norm, isin)
+            core = _core_name(norm)
+            if core and core != norm:
+                _add_key(table, core, isin)
+
+
+def load_security_master(path: Path | str | None = None) -> dict[str, str]:
+    """Build a scrip-name -> ISIN lookup from the authoritative NSE/BSE masters,
+    keyed by normalised company name, symbol and a suffix-stripped core name."""
+    table: dict[str, str] = {}
+    nse = ISIN_MASTER_DIR / "NSE-ISIN.csv"
+    bse = ISIN_MASTER_DIR / "BSE-ISIN.csv"
+    if nse.exists():
+        _load_exchange_master(nse, ["NAME OF COMPANY", "SYMBOL"], "ISIN NUMBER", table)
+    if bse.exists():
+        _load_exchange_master(bse, ["Security Name", "Issuer Name", "Security Id"], "ISIN No", table)
+    seed = Path(path) if path else DEFAULT_MASTER
+    if seed.exists():
+        _load_seed(seed, table)
     return table
 
 
 def resolve_isin(scrip_name: str, master: dict[str, str]) -> str:
-    """Best-effort scrip-name -> ISIN. Exact normalised match, then prefix match."""
+    """Best-effort scrip-name -> ISIN: exact, suffix-stripped core, then prefix."""
     key = _norm_name(scrip_name)
     if not key:
         return ""
     if key in master:
         return master[key]
-    for name, isin in master.items():
-        if name.startswith(key) or key.startswith(name):
-            return isin
+    core = _core_name(key)
+    if core and core in master:
+        return master[core]
+    if core:
+        for name, isin in master.items():
+            if name.startswith(core) or core.startswith(name):
+                return isin
     return ""
 
 
@@ -166,6 +233,7 @@ class ContractNote:
     stt: float = 0.0
     stamp_duty: float = 0.0
     others: float = 0.0
+    total_contract_note_amount: float = 0.0
     trades: list[Trade] = field(default_factory=list)
 
     def total_charges(self) -> Decimal:
@@ -203,6 +271,18 @@ def _header_total(note: ContractNote) -> Decimal:
     )
 
 
+def _header_amount(note: ContractNote) -> Decimal:
+    """Field 12 (Total Contract Note Amount). Prefer the value printed on the note
+    (signed: negative for Purchase per the sample convention); fall back to the
+    deterministic computed total when the note didn't print one."""
+    printed = _dec(note.total_contract_note_amount)
+    if printed != 0:
+        mag = abs(printed)
+        signed = -mag if (note.transaction_type == "P" and PURCHASE_NEGATIVE) else mag
+        return signed.quantize(Decimal(1).scaleb(-AMOUNT_DECIMALS), rounding=ROUND_HALF_UP)
+    return _header_total(note)
+
+
 def _header_line(note: ContractNote) -> str:
     return SEP.join(
         [
@@ -217,7 +297,7 @@ def _header_line(note: ContractNote) -> str:
             _fmt(note.stamp_duty, AMOUNT_DECIMALS),
             _fmt(note.others, AMOUNT_DECIMALS),
             str(len(note.trades)),
-            _fmt(_header_total(note), AMOUNT_DECIMALS),
+            _fmt(_header_amount(note), AMOUNT_DECIMALS),
         ]
     )
 
@@ -327,6 +407,7 @@ def note_from_dict(data: dict, master: dict[str, str] | None = None) -> tuple[Co
         stt=data.get("stt") or 0,
         stamp_duty=data.get("stamp_duty") or 0,
         others=data.get("others") or 0,
+        total_contract_note_amount=data.get("total_contract_note_amount") or 0,
         trades=trades,
     )
     return note, warnings
