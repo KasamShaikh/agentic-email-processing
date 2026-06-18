@@ -399,6 +399,24 @@ def _run_contract(ag, contract_id: str, blobs: list):
     return files_written, all_warnings
 
 
+def _run_onboarding(ag, compare_id: str, blobs: list):
+    """Run the onboarding form-verification pipeline, yield its SSE events,
+    return (files, warnings)."""
+    from onboarding_pipeline import process as _onboarding_process
+
+    files_written: list = []
+    all_warnings: list = []
+    try:
+        for ev in _onboarding_process(blobs, lambda c: _run_agent(ag, compare_id, c)):
+            yield _sse(ev)
+            if ev.get("type") == "onboarding_done":
+                files_written = ev.get("files", [])
+                all_warnings = ev.get("warnings", [])
+    except Exception as exc:  # noqa: BLE001
+        yield _sse({"type": "error", "message": str(exc)[:400]})
+    return files_written, all_warnings
+
+
 def _orchestrate(ag, payload_str: str, source: str = "ui"):
     """Yield SSE events for one email: the orchestrator agent classifies the intent
     and, for contract notes, calls its `run_contract_pipeline` tool — which we execute
@@ -525,6 +543,36 @@ def _orchestrate(ag, payload_str: str, source: str = "ui"):
     )
 
     target = INTENT_TO_AGENT.get(intent, "manual-intervention-ks")
+
+    # Onboarding: two-form cross-verification (web-UI vs handwritten) handled by a
+    # dedicated pipeline (download -> OCR both -> form-compare-ks aligns -> score).
+    if intent == "pre_onboarding":
+        compare_id = name_to_id.get("form-compare-ks")
+        if not compare_id:
+            yield _sse({"type": "error", "message": "form-compare-ks not found"})
+        else:
+            yield _sse({"type": "agent_called", "name": "form-compare-ks", "ts": time.time()})
+            agents_called.append("form-compare-ks")
+            fw, ww = yield from _run_onboarding(ag, compare_id, payload_attachments)
+            files_written, all_warnings = fw, ww
+            results.append(
+                {"agent": "form-compare-ks", "files": files_written, "warnings": all_warnings}
+            )
+        final = {"intent": intent, "delegated_to": agents_called, "results": results}
+        _record(intent, agents_called, payload_attachments, files_written, source)
+        yield _sse(
+            {
+                "type": "done",
+                "status": "completed",
+                "intent": intent,
+                "agentsCalled": agents_called,
+                "finalMessage": json.dumps(final, indent=2),
+                "error": None,
+                "threadId": thread.id,
+                "ts": time.time(),
+            }
+        )
+        return
 
     # Contract notes are handled by the agent's tool call above. If the model
     # classified contract_note but didn't call the tool, run the pipeline in code.

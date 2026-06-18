@@ -39,6 +39,7 @@ AGENT_NAMES = {
     "contract-note-ks",
     "pre-onboarding-ks",
     "form-verification-ks",
+    "form-compare-ks",
     "manual-intervention-ks",
 }
 
@@ -114,6 +115,15 @@ def main() -> None:
         instructions=instructions("pre_onboarding"),
     )
     print(f"created pre-onboarding-ks: {pre.id}")
+
+    # --- Onboarding form comparison: extracts + aligns two forms (web-UI vs
+    #     handwritten); deterministic scoring is done in code (form_compare.py). ---
+    form_compare = agents.create_agent(
+        model=MODEL,
+        name="form-compare-ks",
+        instructions=instructions("form_compare"),
+    )
+    print(f"created form-compare-ks: {form_compare.id}")
 
     # --- Orchestrator: intent classifier + contract-pipeline tool caller ---
     orchestrator = agents.create_agent(
