@@ -282,6 +282,10 @@
 const $ = (s, r=document) => r.querySelector(s);
 let currentSample = "contract";
 let es = null;
+let activeNode = null;
+// classified intent -> the specialist node to light up on the routing map
+const INTENT_NODE = { contract_note:"contract-note-ks", pre_onboarding:"pre-onboarding-ks", manual:"manual-intervention-ks" };
+function clearSampleSelection(){ document.querySelectorAll(".sample-btn").forEach(x=>x.classList.remove("active")); }
 
 function fmtTime(ts){ return new Date(ts*1000).toLocaleTimeString(); }
 function setNode(name, cls){ const n = $(`.node[data-node="${name}"]`); if(!n) return; n.classList.add("fired"); const c=n.querySelector(".chip"); if(c) c.textContent = cls||"fired"; }
@@ -320,12 +324,16 @@ function run(){
 
 // Stream the FULL live agent trace for a REAL Logic-App email (any attachment format).
 function runEventStream(runName){
+  // A Logic App run is a real email — its routing comes from the email content,
+  // not the left-hand sample, so clear that selection to avoid a contradictory UI.
+  clearSampleSelection();
   openStream(`/api/events/stream?run=${encodeURIComponent(runName)}`, null);
 }
 
 function openStream(url, btn){
   if (es) es.close();
   if (btn) btn.disabled = true;
+  activeNode = null;
   resetNodes();
   $("#timeline").innerHTML = "";
   $("#threadNote").textContent = "";
@@ -355,12 +363,19 @@ function handleEvent(ev, btn){
         setStatus(ev.status);
         break;
       case "intent":
+        activeNode = INTENT_NODE[ev.intent] || "manual-intervention-ks";
+        setNode(activeNode,"routed");
         addEvent("orch","◆ Intent classified", `<span class="tag">${ev.label||ev.intent}</span>${ev.reason?`<br><span class="meta">${escapeHtml(ev.reason)}</span>`:""}`, ev.ts);
         break;
-      case "agent_called":
-        setNode(ev.name,"called");
+      case "agent_called": {
+        // Light the node for this agent; if the agent has no node of its own
+        // (e.g. form-compare-ks runs under the onboarding path), light the
+        // specialist node chosen by the classified intent instead.
+        const node = $(`.node[data-node="${ev.name}"]`) ? ev.name : (activeNode || ev.name);
+        setNode(node,"called");
         addEvent("agent","→ Routed to specialist", `<span class="tag">${ev.name}</span>`, ev.ts);
         break;
+      }
       case "result":
         const ok = ev.status==="completed";
         let rb = `<span class="tag">${ev.agent}</span> <span class="meta">${ev.status}</span>`;
@@ -388,8 +403,18 @@ function handleEvent(ev, btn){
         addEvent("error","⚠ Attachment failed", `<code>${escapeHtml(ev.name||"")}</code><br><span class="err">${escapeHtml(ev.error||"")}</span>`, ev.ts);
         break;
       case "output_written":
-        setNode("contract-note-ks","output");
+        setNode(activeNode||"contract-note-ks","output");
         addEvent("final","💾 Output file written", `<a href="${escapeHtml(ev.url||"#")}" target="_blank"><b>${escapeHtml(ev.file||"")}</b></a> → <span class="meta">contract-notes-output</span>${ev.preview?`<div class="answer-box">${escapeHtml(ev.preview)}</div>`:""}`, ev.ts);
+        break;
+      case "compared":
+        setNode(activeNode||"pre-onboarding-ks","comparing");
+        addEvent("agent","⚖ Forms compared", `<span class="tag">${escapeHtml(ev.status||"")}</span> match <b>${ev.matchPct}%</b> · <span class="meta">${ev.matched||0} matched · ${ev.near||0} near · ${ev.mismatched||0} mismatched (of ${ev.total||0})</span>`, ev.ts);
+        break;
+      case "onboarding_done":
+        setNode(activeNode||"pre-onboarding-ks","output");
+        { let ob = `Verdict <b>${escapeHtml(ev.status||"")}</b>${ev.matchPct!=null?` · match <b>${ev.matchPct}%</b>`:""}`;
+          if (ev.warnings&&ev.warnings.length) ob += `<div class="err">⚠ ${ev.warnings.map(w=>escapeHtml(w)).join("<br>")}</div>`;
+          addEvent("agent","▣ Onboarding complete", ob, ev.ts); }
         break;
       case "output_error":
         addEvent("error","⚠ Upload failed", `<code>${escapeHtml(ev.file||"")}</code><br><span class="err">${escapeHtml(ev.error||"")}</span>`, ev.ts);
