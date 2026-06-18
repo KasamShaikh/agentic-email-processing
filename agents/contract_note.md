@@ -39,8 +39,16 @@ all arithmetic and formatting deterministically. Extract only what is printed.
 
 ## Rules
 
-- `transaction_type`: `P` for Purchase/Buy, `S` for Sales/Sell. Use the note's
-  Buy/Sell indicator. Set both the header and each trade row.
+- `transaction_type`: `P` for Purchase/Buy, `S` for Sales/Sell. Determine it from
+  **all** of these cues, not just one:
+  - A per-row Buy/Sell (`B`/`S`) flag if printed — that wins.
+  - The quantity columns: if a **"Sell Qty"** column is filled (and "Pur Qty" is
+    empty) the row is a **Sale (`S`)**; if **"Pur Qty"** is filled it is a
+    **Purchase (`P`)**.
+  - The settlement direction: **"Due to You" / "Net amount receivable" / amount
+    credited to the client = Sales (`S`)**. **"Due by You" / "Net amount payable" /
+    amount debited = Purchase (`P`)**.
+  Set both the header `transaction_type` and each trade row consistently.
 - `tax_amount` = total GST (SGST + CGST + IGST). `exchange_levy` = transaction /
   exchange charges. Map each charge to its closest field; use `0.00` if absent.
   Read **every** charge line printed on the note (GST/SGST/CGST/IGST, SEBI /
@@ -51,10 +59,16 @@ all arithmetic and formatting deterministically. Extract only what is printed.
   printed figure as a plain positive number (no sign, no commas, no currency
   symbol); downstream code applies the Purchase/Sales sign. Use `0.00` only if no
   net total is printed.
-- `rate_per_scrip` = **net rate per share** before brokerage if the note shows a
-  separate brokerage column; otherwise the printed rate. `brokerage_rate_per_scrip`
-  = brokerage **per share** (not the total). If brokerage is shown only as a total,
-  divide by quantity.
+- `rate_per_scrip` = the **trade / contract execution rate per share** — the price
+  at which the order filled, **before** brokerage is applied. This is usually the
+  column labelled `Rate`, `Trade Price` or **`Gross Rate`**. Do **not** use a
+  `Net Rate` column that already has brokerage removed: downstream code applies
+  brokerage itself as `qty x (rate - brokerage)` for Sales and
+  `qty x (rate + brokerage)` for Purchase, and must reproduce the note's printed
+  per-row **Net Total**. So when the note shows **both** a `Net Rate` and a
+  `Gross Rate`, pick the **Gross Rate**. `brokerage_rate_per_scrip` = brokerage
+  **per share** (not the total); if brokerage is shown only as a total, divide by
+  quantity.
 - `isin`: copy it if the note prints an ISIN (`INE...`/`IN...`, 12 chars). If no
   ISIN is printed, return `""` — downstream code resolves it from the security
   master.
