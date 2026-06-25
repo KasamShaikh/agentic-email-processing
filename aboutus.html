@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Agentic Email Processing · About (v2 · MAF)</title>
+<style>
+  :root {
+    --maroon: #97144D;
+    --maroon-deep: #7A0F3E;
+    --magenta: #E5007D;
+    --magenta-soft: #f4a8cf;
+    --ink: #241019;
+    --muted: #8a7480;
+    --line: #ecdfe6;
+    --bg: #faf6f8;
+    --card: #ffffff;
+    --ok: #1a8f5e;
+    --warn: #c8861a;
+    --fail: #c5223b;
+    --shadow: 0 6px 24px rgba(122, 15, 62, 0.08);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+  header.topbar {
+    background: linear-gradient(100deg, var(--maroon-deep), var(--maroon) 55%, var(--magenta));
+    color: #fff;
+    padding: 18px 28px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    box-shadow: var(--shadow);
+  }
+  .brand-mark {
+    width: 40px; height: 40px; border-radius: 10px;
+    background: #fff; color: var(--maroon);
+    display: grid; place-items: center;
+    font-weight: 800; font-size: 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.18);
+  }
+  .topbar h1 { font-size: 19px; margin: 0; font-weight: 700; letter-spacing: .2px; }
+  .topbar p { margin: 2px 0 0; font-size: 12.5px; opacity: .85; }
+  .topbar .spacer { flex: 1; }
+
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    box-shadow: var(--shadow); overflow: hidden;
+  }
+  .card h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .8px;
+    color: var(--maroon); margin: 0; padding: 14px 18px;
+    border-bottom: 1px solid var(--line); display:flex; align-items:center; gap:8px;
+  }
+  .card .body { padding: 16px 18px; }
+
+  /* About */
+  .wrap.about { max-width: 1040px; margin: 22px auto; padding: 0 20px;
+                display: grid; grid-template-columns: 1fr; gap: 18px; align-items: start; }
+  .about h3 { color: var(--maroon); font-size: 15px; margin: 2px 0 8px; }
+  .about p, .about li { font-size: 13.5px; line-height: 1.6; }
+  .about .lead { font-size: 14.5px; color: var(--ink); }
+  .about code { background:#fdf2f7; color: var(--maroon-deep); padding:1px 6px; border-radius:6px; font-size:12px; }
+  .about table { width:100%; border-collapse: collapse; margin-top:6px; }
+  .about th, .about td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); font-size:12.8px; vertical-align: top; }
+  .about th { color: var(--maroon); text-transform: uppercase; letter-spacing:.5px; font-size:11px; }
+  .about tr:last-child td { border-bottom: none; }
+  .steps { counter-reset: step; list-style:none; padding:0; margin:4px 0 0; }
+  .steps > li { position:relative; padding:0 0 16px 42px; }
+  .steps > li:before { counter-increment: step; content: counter(step); position:absolute; left:0; top:0; width:28px; height:28px; border-radius:50%; background:linear-gradient(100deg,var(--maroon),var(--magenta)); color:#fff; display:grid; place-items:center; font-weight:700; font-size:13px; }
+  .steps > li:not(:last-child):after { content:""; position:absolute; left:13px; top:30px; bottom:0; width:2px; background:var(--line); }
+  .steps b { display:block; margin-bottom:2px; }
+  .pill-row { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  .pill-row span { background:#fdf2f7; border:1px solid var(--line); color:var(--maroon-deep); padding:5px 11px; border-radius:20px; font-size:12px; }
+  .about-cards { display:grid; grid-template-columns: 1fr 1fr; gap:18px; }
+  @media (max-width:760px){ .about-cards{ grid-template-columns:1fr; } }
+  .callout { background:#fdf2f7; border-left:4px solid var(--magenta); border-radius:10px; padding:12px 14px; font-size:13px; line-height:1.55; }
+  .arch { width:100%; height:auto; display:block; }
+  .arch .bx { fill:#fff; stroke:var(--line); stroke-width:1.5; }
+  .arch .t { fill:var(--ink); font-size:13px; font-weight:600; }
+  .arch .s { fill:var(--muted); font-size:10.5px; }
+  .arch .lbl { fill:var(--maroon); font-size:10px; font-weight:700; letter-spacing:.3px; }
+  .arch .ln { stroke:#caa9b8; stroke-width:1.6; fill:none; }
+  .meta { font-size:11.5px; color:var(--muted); }
+  .footnote { font-size: 11.5px; color: var(--muted); text-align:center; padding: 6px 0 24px; }
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-mark">A</div>
+    <div>
+      <h1>Agentic Email Processing · About <span style="font-size:11px;font-weight:700;background:rgba(255,255,255,.18);padding:3px 9px;border-radius:20px;vertical-align:middle;letter-spacing:.4px">v2 · MAF</span></h1>
+      <p>Microsoft Agent Framework edition — architecture, agents, flow &amp; open-source options</p>
+    </div>
+    <div class="spacer"></div>
+  </header>
+
+  <div class="wrap about">
+    <section class="card">
+      <h2>ⓘ What this app is</h2>
+      <div class="body">
+        <p class="lead">An <b>agentic email-processing pipeline</b> on Azure. Emails land in an Office 365 inbox; an
+        orchestrator agent reads each one, decides <i>what kind</i> of email it is, and routes it to a specialist
+        agent that does the real work — extracting trades from a broker contract note, or cross-checking a
+        merchant’s onboarding forms — and writes a clean, auditable output file back to storage.</p>
+        <div class="callout" style="margin-top:12px"><b>Version 2 · Microsoft Agent Framework (MAF).</b> Functionally
+        identical to v1, but the agent runtime is now the open-source <b>Microsoft Agent Framework</b> running
+        <i>in-process</i> instead of the Azure AI Agents SDK and the Foundry-hosted agent runtime. The model
+        (<code>gpt-mini-ks</code>), Logic App ingestion, Document Intelligence, Blob storage and every output file are
+        <b>unchanged</b>. Agents are now defined in code and wired into a true MAF <b>Workflow</b> graph: the
+        orchestrator classifies the email, a <b>human-in-the-loop gate</b> pauses the run natively
+        (<code>request_info</code>) for approval, then switch-case routing hands off to the specialist executor that
+        runs the deterministic pipeline. Tools are invoked <b>automatically</b> by the framework (e.g. the contract
+        agent's <code>lookup_isin</code> security-master lookup), and the workflow writes a file-backed checkpoint
+        after each step while the paused review is held open in-process (it auto-decides after a timeout so nothing
+        hangs). There is no server-side <code>threads</code>/<code>runs</code> object and no manual
+        tool-output plumbing. This is a separate copy of the app; the original v1 deployment and its Azure resources
+        are left exactly as they are.</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>▤ High-level architecture</h2>
+      <div class="body">
+        <svg class="arch" viewBox="0 0 960 560" role="img" aria-label="High-level architecture flow diagram">
+          <defs>
+            <linearGradient id="og" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stop-color="#7A0F3E"/><stop offset="1" stop-color="#E5007D"/>
+            </linearGradient>
+            <marker id="ah" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+              <path d="M0,0 L7,3 L0,6 Z" fill="#b56b90"/>
+            </marker>
+          </defs>
+
+          <!-- ingestion row -->
+          <rect class="bx" x="30" y="24" width="250" height="52" rx="12"/>
+          <text class="t" x="155" y="54" text-anchor="middle">✉ Office 365 Inbox</text>
+          <rect class="bx" x="355" y="24" width="250" height="52" rx="12"/>
+          <text class="t" x="480" y="48" text-anchor="middle">Logic App</text>
+          <text class="s" x="480" y="64" text-anchor="middle">logic-email-ks · ingest</text>
+          <rect class="bx" x="680" y="24" width="250" height="52" rx="12"/>
+          <text class="t" x="805" y="48" text-anchor="middle">Blob Storage</text>
+          <text class="s" x="805" y="64" text-anchor="middle">incoming-attachments</text>
+          <path class="ln" d="M280,50 H352" marker-end="url(#ah)"/>
+          <path class="ln" d="M605,50 H677" marker-end="url(#ah)"/>
+
+          <!-- orchestrator -->
+          <rect x="300" y="118" width="360" height="64" rx="14" fill="url(#og)"/>
+          <text x="480" y="142" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">MAF Orchestrator · gpt-mini-ks</text>
+          <text x="480" y="160" text-anchor="middle" fill="#fff" font-size="11" opacity=".9">in-process agent · classifies intent</text>
+          <text x="480" y="174" text-anchor="middle" fill="#fff" font-size="11" opacity=".9">workflow routes · HITL gate pauses</text>
+          <path class="ln" d="M480,76 V116" marker-end="url(#ah)"/>
+          <text class="lbl" x="490" y="101">payload</text>
+
+          <!-- routing -->
+          <path class="ln" d="M480,182 V206 H165 V230" marker-end="url(#ah)"/>
+          <text class="lbl" x="250" y="200" text-anchor="middle">contract_note</text>
+          <path class="ln" d="M480,182 V230" marker-end="url(#ah)"/>
+          <text class="lbl" x="545" y="205" text-anchor="middle">pre_onboarding</text>
+          <path class="ln" d="M480,182 V206 H795 V230" marker-end="url(#ah)"/>
+          <text class="lbl" x="712" y="200" text-anchor="middle">manual</text>
+
+          <!-- contract lane -->
+          <rect class="bx" x="30" y="232" width="270" height="54" rx="12"/>
+          <text class="t" x="165" y="256" text-anchor="middle">Contract Note Agent</text>
+          <text class="s" x="165" y="272" text-anchor="middle">extract trades · resolve IDs</text>
+          <rect class="bx" x="30" y="314" width="270" height="48" rx="12"/>
+          <text class="t" x="165" y="343" text-anchor="middle">Document Intelligence · OCR</text>
+          <path class="ln" d="M165,286 V312" marker-end="url(#ah)"/>
+
+          <!-- onboarding lane -->
+          <rect class="bx" x="345" y="232" width="270" height="54" rx="12"/>
+          <text class="t" x="480" y="252" text-anchor="middle">Document Intelligence · OCR</text>
+          <text class="s" x="480" y="270" text-anchor="middle">both forms → text</text>
+          <rect class="bx" x="345" y="304" width="270" height="46" rx="12"/>
+          <text class="t" x="480" y="332" text-anchor="middle">Form Comparison Agent</text>
+          <rect class="bx" x="345" y="366" width="270" height="46" rx="12"/>
+          <text class="t" x="480" y="388" text-anchor="middle">Deterministic scorer</text>
+          <text class="s" x="480" y="403" text-anchor="middle">match % · thresholds</text>
+          <path class="ln" d="M480,286 V304" marker-end="url(#ah)"/>
+          <path class="ln" d="M480,350 V366" marker-end="url(#ah)"/>
+
+          <!-- manual lane -->
+          <rect class="bx" x="660" y="232" width="270" height="54" rx="12"/>
+          <text class="t" x="795" y="256" text-anchor="middle">Manual Intervention Agent</text>
+          <text class="s" x="795" y="272" text-anchor="middle">flag for a human</text>
+          <rect class="bx" x="660" y="314" width="270" height="48" rx="12"/>
+          <text class="t" x="795" y="343" text-anchor="middle">Human review queue</text>
+          <path class="ln" d="M795,286 V312" marker-end="url(#ah)"/>
+
+          <!-- output -->
+          <rect class="bx" x="240" y="470" width="480" height="58" rx="14"/>
+          <text class="t" x="480" y="496" text-anchor="middle">Blob Storage · contract-notes-output</text>
+          <text class="s" x="480" y="514" text-anchor="middle">PIS upload file · onboarding report (.txt + .json)</text>
+          <path class="ln" d="M165,362 V455 H360 V468" marker-end="url(#ah)"/>
+          <path class="ln" d="M480,412 V468" marker-end="url(#ah)"/>
+        </svg>
+        <p class="meta" style="margin-top:10px">Email in → Logic App stages attachments to Blob → an in-process <b>Microsoft Agent Framework</b> <b>workflow</b> runs: the orchestrator (gpt-mini-ks) classifies the intent, a <b>human-in-the-loop gate</b> pauses for approval, then switch-case routing hands off to the specialist executor that runs the deterministic pipeline → the result is written back to Blob. Every call uses Entra managed identity — no keys.</p>
+      </div>
+    </section>
+
+    <div class="about-cards">
+      <section class="card">
+        <h2>🧠 The model &amp; platform</h2>
+        <div class="body">
+          <p><b>LLM:</b> a GPT‑class small model deployed on <b>Azure AI Foundry</b> (deployment <code>gpt-mini-ks</code>),
+          chosen for low latency and cost on high-volume mailbox traffic. <b>Unchanged from v1.</b></p>
+          <p><b>Agent runtime (v2):</b> the open-source <b>Microsoft Agent Framework</b>. Agents are defined in code as
+          in-process <code>Agent</code> objects with their own instructions and tools, wired into a true MAF
+          <b>Workflow</b> graph (executors + switch-case edges). The framework invokes real tools automatically
+          (e.g. the contract agent's <code>lookup_isin</code>), and the workflow pauses natively for human approval
+          via <code>request_info</code>, checkpointing each superstep to file-backed storage
+          (<code>FileCheckpointStorage</code>). The model is still served by Foundry
+          <code>gpt-mini-ks</code>.</p>
+          <p><b>OCR:</b> <b>Azure AI Document Intelligence</b> (<code>prebuilt-layout</code>, markdown output) turns scanned
+          PDFs and images into text the agents can read.</p>
+          <p><b>Auth:</b> Microsoft Entra <b>managed identity</b> only — no keys. Blob shared-key access is disabled.</p>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>⚛ The core design principle</h2>
+        <div class="body">
+          <div class="callout"><b>The LLM proposes; deterministic code decides.</b><br>
+          Agents do the fuzzy, language-heavy work — reading documents, aligning fields that are worded
+          differently. Plain Python then makes the final, repeatable decision (scoring, formatting, thresholds).</div>
+          <p style="margin-top:12px">Example: in onboarding, <code>form-compare-ks</code> <i>aligns</i> the two forms
+          semantically, but a deterministic scorer applies fixed thresholds (≥0.95 = match, ≥0.80 = near, else
+          mismatch) so the same forms always yield the same verdict — essential for an auditable process.</p>
+        </div>
+      </section>
+    </div>
+
+    <section class="card">
+      <h2>⬡ The agent team</h2>
+      <div class="body">
+        <table>
+          <thead><tr><th>Agent</th><th>Role</th><th>Tools</th></tr></thead>
+          <tbody>
+            <tr><td><b>orchestrator-ks</b></td><td>Reads each email and classifies its intent (contract note / merchant pre-onboarding / manual). The MAF workflow graph then routes to the right specialist.</td><td>none (classification only)</td></tr>
+            <tr><td><b>contract-note-ks</b></td><td>Extracts trades from broker contract-note attachments, resolves security identifiers, and produces the pipe-delimited upload file.</td><td>real MAF tool <code>lookup_isin</code> (NSE/BSE security master)</td></tr>
+            <tr><td><b>form-compare-ks</b></td><td>The onboarding specialist: OCRs both merchant forms (web-portal vs handwritten) and <i>aligns</i> the fields so a deterministic scorer can compute the match.</td><td>none</td></tr>
+            <tr><td><b>manual-intervention-ks</b></td><td>Handles anything that doesn’t fit an automated path — drafts a reply / routes it for a human.</td><td>none</td></tr>
+          </tbody>
+        </table>
+        <p class="meta" style="margin-top:10px">These four executors are the ones the workflow graph actually runs. Two further prompts ship in the repo — <code>pre_onboarding.md</code> and <code>form_verification.md</code> — for a future multi-step onboarding flow, but they are not wired into the current graph.</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>➤ How a message flows, end to end</h2>
+      <div class="body">
+        <ol class="steps">
+          <li><b>Email arrives</b> A new mail hits the Office 365 inbox and triggers the <code>logic-email-ks</code> Logic App.</li>
+          <li><b>Ingest &amp; stage</b> The Logic App saves each attachment to the <code>incoming-attachments</code> blob container and composes a JSON payload (subject, body, blob paths).</li>
+          <li><b>Classify intent</b> The in-process <b>Microsoft Agent Framework</b> orchestrator executor (<code>gpt-mini-ks</code>) reads the payload and classifies it: <code>contract_note</code>, <code>pre_onboarding</code> or <code>manual</code>.</li>
+          <li><b>Human-in-the-loop gate</b> The workflow pauses natively (<code>request_info</code>) at <b>one</b> approval gate, its level set by the intent (🔴 L1 contract note · 🟠 L2 onboarding · 🟢 L3 manual). A reviewer can approve, reject or re-route from the dashboard; the run is held open — and checkpointed to file-backed storage each step — until a human decides, then auto-decides after the review window (≈15 min in the UI) so nothing hangs.</li>
+          <li><b>Route to a specialist</b> On approval, switch-case edges hand the work to the matching specialist executor — the model decides the intent, the workflow graph decides the wiring.</li>
+          <li><b>Do the work</b> &nbsp;• <b>Contract note:</b> OCR → extract trades → resolve identifiers → build the pipe-delimited file.<br>&nbsp;• <b>Onboarding (demo):</b> OCR both forms → agent aligns fields → deterministic scorer computes match % and flags mismatches.</li>
+          <li><b>Write output</b> The result lands in the <code>contract-notes-output</code> container (a <code>.txt</code> report + machine <code>.json</code>).</li>
+          <li><b>Observe</b> Every step is streamed to the live dashboard over Server-Sent Events and saved as a replayable trace.</li>
+        </ol>
+      </div>
+    </section>
+
+    <div class="about-cards">
+      <section class="card">
+        <h2>🗂 Inputs, outputs &amp; storage</h2>
+        <div class="body">
+          <p><b>Input:</b> <code>incoming-attachments</code> — raw email attachments.</p>
+          <p><b>Demo forms:</b> <code>onboarding</code> — the two fixed sample forms used for the onboarding comparison.</p>
+          <p><b>Output:</b> <code>contract-notes-output</code> — generated upload files and onboarding reports.</p>
+          <p class="meta">All access is via managed identity; nothing is read from or written with account keys.</p>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>🛠 Tech stack &amp; security</h2>
+        <div class="body">
+          <div class="pill-row">
+            <span>Azure AI Foundry</span><span>Microsoft Agent Framework</span><span>Document Intelligence</span>
+            <span>Azure Blob Storage</span><span>Logic Apps (O365)</span><span>FastAPI</span>
+            <span>Server-Sent Events</span><span>Managed Identity</span>
+          </div>
+          <p style="margin-top:12px"><b>Security posture:</b> keyless auth end-to-end (Entra managed identity), storage shared-key
+          disabled, the dev server bound to localhost only, and the subscription id is read live at runtime — never
+          written to disk or committed.</p>
+        </div>
+      </section>
+    </div>
+
+    <section class="card">
+      <h2>🧩 Open-source stack options for BFSI <span style="font-size:10px;font-weight:700;background:#fdf2f7;border:1px solid var(--line);color:var(--maroon-deep);padding:3px 9px;border-radius:20px;letter-spacing:.4px;text-transform:none">select to discuss</span></h2>
+      <div class="body">
+        <p>MAF stays the orchestration runtime in every case. Tick the components you'd like to consider — all are
+        permissive-licence, self-hostable and BFSI-procurement friendly. Your selections are remembered in this
+        browser; tell me which to proceed with and I'll fold them into the v2 plan.</p>
+        <table id="ossTable">
+          <thead><tr><th style="width:46px">Pick</th><th>Layer</th><th>OSS option</th><th>License</th><th>Role alongside MAF</th></tr></thead>
+          <tbody>
+            <tr><td><input type="checkbox" data-oss="otel" style="width:17px;height:17px;accent-color:var(--maroon);cursor:pointer"></td><td><b>Observability &amp; audit</b> <span style="font-size:10px;font-weight:700;color:#1a8f5e;background:#e8f7ef;padding:2px 7px;border-radius:10px">recommended</span></td><td>OpenTelemetry + Langfuse <span class="meta">(or Arize Phoenix)</span></td><td>Apache-2.0 / MIT</td><td>MAF emits OTel spans natively → replayable prompt / response / tool audit trail</td></tr>
+            <tr><td><input type="checkbox" data-oss="docling" style="width:17px;height:17px;accent-color:var(--maroon);cursor:pointer"></td><td><b>OCR / extraction</b> <span style="font-size:10px;font-weight:700;color:#1a8f5e;background:#e8f7ef;padding:2px 7px;border-radius:10px">recommended</span></td><td>Docling / PaddleOCR / Tesseract</td><td>MIT / Apache-2.0</td><td>On-prem OCR tool or fallback behind the same interface as Document Intelligence</td></tr>
+            <tr><td><input type="checkbox" data-oss="vllm" style="width:17px;height:17px;accent-color:var(--maroon);cursor:pointer"></td><td><b>LLM (data sovereignty)</b></td><td>Mistral / Phi / Qwen via vLLM or Ollama</td><td>Apache-2.0 / MIT</td><td>MAF points its chat client at a self-hosted OpenAI-compatible endpoint</td></tr>
+            <tr><td><input type="checkbox" data-oss="postgres" style="width:17px;height:17px;accent-color:var(--maroon);cursor:pointer"></td><td><b>Audit datastore</b></td><td>PostgreSQL (+ pgvector)</td><td>PostgreSQL (permissive)</td><td>Append-only processing / audit log, replacing the local <code>processed.jsonl</code></td></tr>
+            <tr><td><input type="checkbox" data-oss="guardrails" style="width:17px;height:17px;accent-color:var(--maroon);cursor:pointer"></td><td><b>Guardrails</b></td><td>NeMo Guardrails / Guardrails AI</td><td>Apache-2.0</td><td>Validate agent inputs / outputs around each MAF call (jailbreak, format, policy)</td></tr>
+            <tr><td><input type="checkbox" data-oss="eval" style="width:17px;height:17px;accent-color:var(--maroon);cursor:pointer"></td><td><b>Eval / QA</b></td><td>promptfoo / RAGAS / DeepEval</td><td>MIT / Apache-2.0</td><td>Offline regression tests on agent classification &amp; extraction outputs</td></tr>
+            <tr><td><input type="checkbox" data-oss="container" style="width:17px;height:17px;accent-color:var(--maroon);cursor:pointer"></td><td><b>Package &amp; run</b></td><td>Docker / Podman → AKS</td><td>Apache-2.0</td><td>Containerise the app; no application-code change required</td></tr>
+          </tbody>
+        </table>
+        <div class="callout" style="margin-top:12px"><b>Suggested first slice</b> (zero infra change, all in-process, MAF intact):
+        <b>OpenTelemetry/Langfuse + Docling fallback</b>. License traps to avoid for BFSI: n8n (fair-code),
+        HashiCorp Vault (BSL) and Llama weights (non-OSI community licence).</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>🧑‍⚖️ How human-in-the-loop works (for business)</h2>
+      <div class="body">
+        <svg class="arch" viewBox="0 0 960 540" role="img" aria-label="Human-in-the-loop business flow diagram">
+          <defs>
+            <linearGradient id="og2" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stop-color="#7A0F3E"/><stop offset="1" stop-color="#E5007D"/>
+            </linearGradient>
+            <marker id="ah2" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+              <path d="M0,0 L7,3 L0,6 Z" fill="#b56b90"/>
+            </marker>
+          </defs>
+
+          <rect class="bx" x="355" y="20" width="250" height="50" rx="12"/>
+          <text class="t" x="480" y="50" text-anchor="middle">📧 Email arrives</text>
+          <path class="ln" d="M480,70 V102" marker-end="url(#ah2)"/>
+          <text class="lbl" x="490" y="90">every item</text>
+
+          <rect x="300" y="104" width="360" height="66" rx="14" fill="url(#og2)"/>
+          <text x="480" y="130" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">🤖 AI does the work</text>
+          <text x="480" y="148" text-anchor="middle" fill="#fff" font-size="11" opacity=".9">reads · checks · compares · prepares</text>
+          <text x="480" y="163" text-anchor="middle" fill="#fff" font-size="11" opacity=".9">routine items flow straight through</text>
+
+          <path class="ln" d="M480,170 V198 H165 V236" marker-end="url(#ah2)"/>
+          <text class="lbl" x="250" y="192" text-anchor="middle">unusual case</text>
+          <path class="ln" d="M480,170 V236" marker-end="url(#ah2)"/>
+          <text class="lbl" x="556" y="192" text-anchor="middle">needs sign-off</text>
+          <path class="ln" d="M480,170 V198 H795 V236" marker-end="url(#ah2)"/>
+          <text class="lbl" x="712" y="192" text-anchor="middle">final step</text>
+
+          <rect x="30" y="238" width="270" height="74" rx="12" fill="#e8f7ef" stroke="#1a8f5e" stroke-width="1.5"/>
+          <text x="165" y="264" text-anchor="middle" style="fill:#0f5c3c;font-weight:700;font-size:14px">🟢 Exception check</text>
+          <text class="s" x="165" y="284" text-anchor="middle">Bother a human ONLY when</text>
+          <text class="s" x="165" y="299" text-anchor="middle">something looks off (most skip)</text>
+
+          <rect x="345" y="238" width="270" height="74" rx="12" fill="#fbf1e0" stroke="#b5740f" stroke-width="1.5"/>
+          <text x="480" y="264" text-anchor="middle" style="fill:#8a5709;font-weight:700;font-size:14px">🟠 Maker review</text>
+          <text class="s" x="480" y="284" text-anchor="middle">A person approves / rejects ·</text>
+          <text class="s" x="480" y="299" text-anchor="middle">held for a human · auto-approves on timeout</text>
+
+          <rect x="660" y="238" width="270" height="74" rx="12" fill="#fdeaf4" stroke="#E5007D" stroke-width="1.5"/>
+          <text x="795" y="264" text-anchor="middle" style="fill:#97144D;font-weight:700;font-size:14px">🔴 Final sign-off</text>
+          <text class="s" x="795" y="284" text-anchor="middle">Quick confirm before the</text>
+          <text class="s" x="795" y="299" text-anchor="middle">one irreversible save</text>
+
+          <path class="ln" d="M165,312 V336" marker-end="url(#ah2)"/>
+          <path class="ln" d="M480,312 V336" marker-end="url(#ah2)"/>
+          <path class="ln" d="M795,312 V336" marker-end="url(#ah2)"/>
+
+          <rect class="bx" x="40" y="338" width="250" height="46" rx="12"/>
+          <text class="t" x="165" y="366" text-anchor="middle">👤 Approve / Reject</text>
+          <rect class="bx" x="355" y="338" width="250" height="46" rx="12"/>
+          <text class="t" x="480" y="366" text-anchor="middle">👤 Approve / Reject / Edit</text>
+          <rect class="bx" x="670" y="338" width="250" height="46" rx="12"/>
+          <text class="t" x="795" y="366" text-anchor="middle">👤 Approve / Reject</text>
+
+          <rect x="270" y="454" width="420" height="58" rx="14" fill="#e8f7ef" stroke="#1a8f5e" stroke-width="1.5"/>
+          <text class="t" x="480" y="480" text-anchor="middle">✅ Saved to core system</text>
+          <text class="s" x="480" y="498" text-anchor="middle">full audit trail — who · when · why</text>
+          <path class="ln" d="M165,384 V442 H400 V452" marker-end="url(#ah2)"/>
+          <path class="ln" d="M480,384 V452" marker-end="url(#ah2)"/>
+          <path class="ln" d="M795,384 V442 H560 V452" marker-end="url(#ah2)"/>
+        </svg>
+        <p class="meta" style="margin-top:10px">Read it left-to-right: the <b>AI prepares every item</b>, then routes by risk to <b>one</b> gate. 🟢 <b>Exception check</b> (manual email) pulls in a human for odd cases. 🟠 <b>Maker review</b> (onboarding) holds the run for a human approve/reject, auto-approving if the review window lapses. 🔴 <b>Final sign-off</b> (contract note) is a quick yes/no before the one irreversible write. <b>Speed where it's safe, control where it matters</b> — every decision is logged for audit.</p>
+      </div>
+    </section>
+
+    <section class="card" id="hitlMock">
+      <h2>🧑‍⚖️ Human-in-the-loop · unified review queue <span style="font-size:10px;font-weight:700;background:#fdf2f7;border:1px solid var(--line);color:var(--maroon-deep);padding:3px 9px;border-radius:20px;letter-spacing:.4px;text-transform:none">snapshot · live in dashboard</span></h2>
+      <div class="body">
+        <p>All three gate types feed <b>one review queue</b> and resume through <b>one endpoint</b> — backed live by the workflow's native <code>request_info</code> pause and the dashboard's <code>/api/hitl/decision</code> resume. The gate is chosen per function by <b>reversibility × latency × risk</b>. The cards below are a representative snapshot; the live, wired queue runs in the dashboard.</p>
+
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:4px 0 16px">
+          <span style="padding:5px 10px;border-radius:8px;background:#fdf2f7;border:1px solid var(--line);font-size:11.5px;font-weight:600">Email</span>
+          <span style="color:var(--muted)">→</span>
+          <span style="padding:5px 10px;border-radius:8px;background:#fdf2f7;border:1px solid var(--line);font-size:11.5px;font-weight:600">Classify intent</span>
+          <span style="color:var(--muted)">→</span>
+          <span style="padding:5px 10px;border-radius:8px;background:#fdf2f7;border:1px solid var(--line);font-size:11.5px;font-weight:600">HITL gate (one per email) — Contract <span style="color:var(--magenta);font-weight:800">L1</span> · Onboarding <span style="color:#b5740f;font-weight:800">L2</span> · Manual <span style="color:var(--ok);font-weight:800">L3</span></span>
+          <span style="color:var(--muted)">→</span>
+          <span style="padding:5px 10px;border-radius:8px;background:#fdf2f7;border:1px solid var(--line);font-size:11.5px;font-weight:600">Specialist runs</span>
+          <span style="color:var(--muted)">→</span>
+          <span style="padding:5px 10px;border-radius:8px;background:#fdf2f7;border:1px solid var(--line);font-size:11.5px;font-weight:600">Write output</span>
+        </div>
+
+        <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:16px">
+          <span style="font-size:11.5px"><span style="display:inline-block;font-size:10px;font-weight:800;letter-spacing:.4px;padding:2px 7px;border-radius:9px;background:#fdeaf4;color:var(--magenta);border:1px solid #f4c8e0">L1</span> Final sign-off — quick confirm before the one irreversible write (contract note → PIS)</span>
+          <span style="font-size:11.5px"><span style="display:inline-block;font-size:10px;font-weight:800;letter-spacing:.4px;padding:2px 7px;border-radius:9px;background:#fbf1e0;color:#b5740f;border:1px solid #f0dcb0">L2</span> Maker review — durable approve/reject of the onboarding verdict</span>
+          <span style="font-size:11.5px"><span style="display:inline-block;font-size:10px;font-weight:800;letter-spacing:.4px;padding:2px 7px;border-radius:9px;background:#e8f7ef;color:var(--ok);border:1px solid #bfe7d2">L3</span> Exception check — a human decides what to do with an unclassified email</span>
+        </div>
+
+        <div id="rqStats" style="font-weight:700;font-size:13px;color:var(--maroon-deep);margin-bottom:10px">—</div>
+
+        <div style="display:grid;gap:10px">
+          <div data-rq data-state="await" style="border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:#fff;display:flex;flex-direction:column;gap:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+              <div style="display:flex;align-items:center;gap:8px"><span style="display:inline-block;font-size:10px;font-weight:800;letter-spacing:.4px;padding:2px 7px;border-radius:9px;background:#fdeaf4;color:var(--magenta);border:1px solid #f4c8e0">L1</span><b>Contract note · final sign-off</b></div>
+              <span data-status style="background:#fdf2f7;color:var(--maroon-deep);border:1px solid var(--line);font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px">⏸ Awaiting</span>
+            </div>
+            <div class="meta" style="font-size:12.5px">Gate: approve before the pipe-delimited PIS upload file is written to <code>contract-notes-output</code> — irreversible regulatory output.</div>
+            <div style="font-family:monospace;font-size:12px;background:#faf6f8;border:1px solid var(--line);border-radius:8px;padding:6px 9px">intent=contract_note · attachments=1 · → PIS .txt + .json</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button data-act="approved" style="border:1px solid #bfe7d2;background:#e8f7ef;color:var(--ok);font-weight:700;font-size:12.5px;padding:6px 14px;border-radius:8px;cursor:pointer">Approve</button>
+              <button data-act="rejected" style="border:1px solid #f3c2cc;background:#fdeaee;color:var(--fail);font-weight:700;font-size:12.5px;padding:6px 14px;border-radius:8px;cursor:pointer">Reject</button>
+            </div>
+          </div>
+
+          <div data-rq data-state="await" style="border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:#fff;display:flex;flex-direction:column;gap:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+              <div style="display:flex;align-items:center;gap:8px"><span style="display:inline-block;font-size:10px;font-weight:800;letter-spacing:.4px;padding:2px 7px;border-radius:9px;background:#fbf1e0;color:#b5740f;border:1px solid #f0dcb0">L2</span><b>Merchant onboarding · maker review</b></div>
+              <span data-status style="background:#fdf2f7;color:var(--maroon-deep);border:1px solid var(--line);font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px">⏸ Awaiting</span>
+            </div>
+            <div class="meta" style="font-size:12.5px">Gate: approve the web-portal vs handwritten verification verdict before the onboarding report is written.</div>
+            <div style="font-family:monospace;font-size:12px;background:#faf6f8;border:1px solid var(--line);border-radius:8px;padding:6px 9px">intent=pre_onboarding · 2 forms · match 0.82 → review</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button data-act="approved" style="border:1px solid #bfe7d2;background:#e8f7ef;color:var(--ok);font-weight:700;font-size:12.5px;padding:6px 14px;border-radius:8px;cursor:pointer">Approve</button>
+              <button data-act="rejected" style="border:1px solid #f3c2cc;background:#fdeaee;color:var(--fail);font-weight:700;font-size:12.5px;padding:6px 14px;border-radius:8px;cursor:pointer">Reject</button>
+            </div>
+          </div>
+
+          <div data-rq data-state="await" style="border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:#fff;display:flex;flex-direction:column;gap:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+              <div style="display:flex;align-items:center;gap:8px"><span style="display:inline-block;font-size:10px;font-weight:800;letter-spacing:.4px;padding:2px 7px;border-radius:9px;background:#e8f7ef;color:var(--ok);border:1px solid #bfe7d2">L3</span><b>Manual / unclassified · exception</b></div>
+              <span data-status style="background:#fdf2f7;color:var(--maroon-deep);border:1px solid var(--line);font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px">⏸ Awaiting</span>
+            </div>
+            <div class="meta" style="font-size:12.5px">Gate: no automated path — a human decides, and can re-route the email to another intent before it runs.</div>
+            <div style="font-family:monospace;font-size:12px;background:#faf6f8;border:1px solid var(--line);border-radius:8px;padding:6px 9px">intent=manual · subject="(unrecognised request)"</div>
+            <textarea data-editbox style="display:none;font-family:monospace;font-size:12px;width:100%;border:1px dashed var(--magenta-soft);border-radius:8px;padding:6px 9px;background:#fff;resize:vertical" rows="2">contract_note</textarea>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button data-act="approved" style="border:1px solid #bfe7d2;background:#e8f7ef;color:var(--ok);font-weight:700;font-size:12.5px;padding:6px 14px;border-radius:8px;cursor:pointer">Approve</button>
+              <button data-act="rejected" style="border:1px solid #f3c2cc;background:#fdeaee;color:var(--fail);font-weight:700;font-size:12.5px;padding:6px 14px;border-radius:8px;cursor:pointer">Reject</button>
+              <button data-edit style="border:1px solid var(--line);background:#fff;color:var(--muted);font-weight:700;font-size:12.5px;padding:6px 14px;border-radius:8px;cursor:pointer">Edit · re-route</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <script>
+        (function(){
+          var root=document.getElementById('hitlMock');
+          if(!root) return;
+          function recount(){
+            var a=0,ap=0,rj=0;
+            root.querySelectorAll('[data-rq]').forEach(function(c){
+              var s=c.getAttribute('data-state');
+              if(s==='approved')ap++; else if(s==='rejected')rj++; else a++;
+            });
+            root.querySelector('#rqStats').textContent=a+' awaiting · '+ap+' approved · '+rj+' rejected';
+          }
+          root.querySelectorAll('[data-act]').forEach(function(btn){
+            btn.addEventListener('click',function(){
+              var card=btn.closest('[data-rq]'); if(!card) return;
+              var act=btn.getAttribute('data-act');
+              card.setAttribute('data-state',act);
+              var st=card.querySelector('[data-status]');
+              if(act==='approved'){st.textContent='✓ Approved';st.style.background='#e8f7ef';st.style.color='var(--ok)';st.style.borderColor='#bfe7d2';}
+              else{st.textContent='✕ Rejected';st.style.background='#fdeaee';st.style.color='var(--fail)';st.style.borderColor='#f3c2cc';}
+              card.querySelectorAll('[data-act],[data-edit]').forEach(function(b){b.disabled=true;b.style.opacity='.45';b.style.cursor='default';});
+              recount();
+            });
+          });
+          root.querySelectorAll('[data-edit]').forEach(function(btn){
+            btn.addEventListener('click',function(){
+              var box=btn.closest('[data-rq]').querySelector('[data-editbox]');
+              if(box) box.style.display=(box.style.display==='none'||!box.style.display)?'block':'none';
+            });
+          });
+          recount();
+        })();
+      </script>
+    </section>
+  </div>
+
+  <script>
+    (function(){
+      var KEY='oss-picks-maf';
+      var saved={};
+      try { saved = JSON.parse(localStorage.getItem(KEY)||'{}'); } catch(e){}
+      document.querySelectorAll('#ossTable input[data-oss]').forEach(function(cb){
+        if(saved[cb.dataset.oss]) cb.checked=true;
+        cb.addEventListener('change',function(){
+          var s={};
+          try { s = JSON.parse(localStorage.getItem(KEY)||'{}'); } catch(e){}
+          s[cb.dataset.oss]=cb.checked;
+          localStorage.setItem(KEY,JSON.stringify(s));
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -30,10 +30,13 @@ from datetime import datetime
 from pathlib import Path
 
 from azure.identity import DefaultAzureCredential
-from azure.ai.agents import AgentsClient
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+
+import hitl
+import maf_agents
+import workflow
 
 # --------------------------------------------------------------------------- #
 # Configuration  (env-driven so the same code runs locally and on App Service;
@@ -99,7 +102,6 @@ STATIC_DIR = Path(__file__).parent / "static"
 app = FastAPI(title="Agentic Email Processing Dashboard")
 
 _credential = DefaultAzureCredential()
-_client: AgentsClient | None = None
 
 
 def _arm_get(url: str, timeout: int = 60) -> dict:
@@ -109,17 +111,6 @@ def _arm_get(url: str, timeout: int = 60) -> dict:
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
         return json.loads(resp.read().decode("utf-8"))
-
-
-def client() -> AgentsClient:
-    global _client
-    if _client is None:
-        _client = AgentsClient(
-            endpoint=ENDPOINT,
-            credential=_credential,
-            credential_scopes=["https://ai.azure.com/.default"],
-        )
-    return _client
 
 
 def _sse(event: dict) -> str:
@@ -242,7 +233,7 @@ def _iter_process_run(run_name: str):
     yield _sse(email_ev)
 
     try:
-        for chunk in _orchestrate(client(), json.dumps(payload), source="logicapp"):
+        for chunk in _orchestrate(json.dumps(payload), source="logicapp"):
             try:
                 collected.append(json.loads(chunk[6:].strip()))
             except Exception:  # noqa: BLE001
@@ -301,8 +292,23 @@ def _poller_loop() -> None:
         time.sleep(POLL_INTERVAL)
 
 
+def _enable_tracing() -> None:
+    """Best-effort: turn on MAF OpenTelemetry instrumentation (a span per agent run)
+    when MAF_TRACING is set. The dashboard's own per-run event trace is always on."""
+    if os.getenv("MAF_TRACING", "0").lower() not in ("1", "true", "yes"):
+        return
+    try:
+        from agent_framework.observability import enable_instrumentation
+
+        enable_instrumentation()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 @app.on_event("startup")
 def _start_poller() -> None:
+    _enable_tracing()
+    maf_agents.warmup()
     if AUTO_PROCESS:
         threading.Thread(target=_poller_loop, name="autoprocess", daemon=True).start()
 
@@ -312,377 +318,158 @@ def _az() -> str | None:
     return shutil.which("az") or shutil.which("az.cmd")
 
 
-def _agents_index() -> dict[str, str]:
-    """id -> name for all agents in the project."""
-    return {a.id: a.name for a in client().list_agents()}
+def _map_workflow_event(ev, state: dict) -> dict | None:
+    """Map a MAF WorkflowEvent to the dashboard's SSE event dict (or None to skip).
 
-
-def _detect_agents(step_dict: dict, id_to_name: dict[str, str]) -> list[str]:
-    """Given a run-step dict, return any specialist agents it references."""
-    blob = json.dumps(step_dict)
-    hits: set[str] = set()
-    for tool_name, agent_name in TOOL_TO_AGENT.items():
-        if f'"{tool_name}"' in blob:
-            hits.add(agent_name)
-    for aid, aname in id_to_name.items():
-        if aid in blob and aname != ORCHESTRATOR_NAME:
-            hits.add(aname)
-    return sorted(hits)
-
-
-def _agent_reply(ag, thread_id: str) -> str:
-    """Latest assistant text on a thread."""
-    for msg in ag.messages.list(thread_id=thread_id):
-        md = msg.as_dict()
-        if md.get("role") == "assistant":
-            parts = [
-                c.get("text", {}).get("value", "")
-                for c in md.get("content", [])
-                if c.get("type") == "text"
-            ]
-            text = "\n".join(p for p in parts if p).strip()
-            if text:
-                return text
-    return ""
-
-
-def _run_agent(ag, agent_id: str, content: str) -> dict:
-    """Run one leaf agent to completion; return status/text/error."""
-    thread = ag.threads.create()
-    ag.messages.create(thread_id=thread.id, role="user", content=content)
-    run = ag.runs.create_and_process(thread_id=thread.id, agent_id=agent_id)
-    status = str(run.status).split(".")[-1].lower()
-    err = None
-    if getattr(run, "last_error", None):
-        le = run.last_error
-        err = le.as_dict() if hasattr(le, "as_dict") else str(le)
-    return {
-        "status": status,
-        "text": _agent_reply(ag, thread.id),
-        "threadId": thread.id,
-        "runId": run.id,
-        "error": err,
-    }
-
-
-def _parse_intent(text: str) -> tuple[str, str]:
-    """Extract {intent, reason} from the classifier output (robust to extra prose)."""
-    intent, reason = "", ""
-    match = re.search(r"\{.*\}", text or "", re.S)
-    if match:
-        try:
-            obj = json.loads(match.group(0))
-            intent = str(obj.get("intent", "")).strip()
-            reason = str(obj.get("reason", "")).strip()
-        except Exception:  # noqa: BLE001
-            pass
-    if intent not in INTENT_TO_AGENT:
-        low = (text or "").lower()
-        if "contract" in low or "trade" in low:
-            intent = "contract_note"
-        elif "onboard" in low or "merchant" in low or "kyc" in low:
-            intent = "pre_onboarding"
+    The orchestrator and specialist executors push the dashboard's own SSE dicts onto
+    the workflow event stream (as `data` / `output` events), so the frontend contract
+    is unchanged. Also accumulates a small run summary for the processed-emails log."""
+    t = getattr(ev, "type", None)
+    if t in ("data", "output"):
+        d = getattr(ev, "data", None)
+        if isinstance(d, dict) and d.get("type"):
+            et = d["type"]
+            if et == "intent" and d.get("intent"):
+                state["intent"] = d["intent"]
+            elif et == "agent_called" and d.get("name"):
+                state["agents"].append(d["name"])
+            elif et == "output_written":
+                state["files"] += 1
+            elif et == "done":
+                if d.get("intent"):
+                    state["intent"] = d["intent"]
+                state["files"] = max(state["files"], int(d.get("filesCount") or 0))
+            return d
+        return None
+    if t in ("error", "failed"):
+        data = getattr(ev, "data", None)
+        if isinstance(data, str):
+            msg = data
         else:
-            intent = "manual"
-    return intent, reason
+            msg = str(getattr(ev, "details", None) or data or "workflow error")
+        return {"type": "error", "message": msg[:400], "ts": time.time()}
+    return None
 
 
-def _status_str(run) -> str:
-    """Normalise a run status enum/string to a lowercase token."""
-    return str(run.status).split(".")[-1].lower()
+def _orchestrate(payload_str: str, source: str = "ui"):
+    """Yield SSE events for one email, end to end, by running the MAF **workflow**:
 
+      orchestrator-ks (classify) -> hitl-gate (native `request_info` pause)
+        -> switch-case routing -> specialist executor (deterministic pipeline) -> done.
 
-def _run_contract(ag, contract_id: str, blobs: list):
-    """Run the contract pipeline, yield its SSE events, return (files, warnings)."""
-    from contract_pipeline import process as _contract_process
-
-    files_written: list = []
-    all_warnings: list = []
-    try:
-        for ev in _contract_process(blobs, lambda c: _run_agent(ag, contract_id, c)):
-            yield _sse(ev)
-            if ev.get("type") == "contract_done":
-                files_written = ev.get("files", [])
-                all_warnings = ev.get("warnings", [])
-    except Exception as exc:  # noqa: BLE001
-        yield _sse({"type": "error", "message": str(exc)[:400]})
-    return files_written, all_warnings
-
-
-def _run_onboarding(ag, compare_id: str, blobs: list):
-    """Run the onboarding form-verification pipeline, yield its SSE events,
-    return (files, warnings)."""
-    from onboarding_pipeline import process as _onboarding_process
-
-    files_written: list = []
-    all_warnings: list = []
-    try:
-        for ev in _onboarding_process(blobs, lambda c: _run_agent(ag, compare_id, c)):
-            yield _sse(ev)
-            if ev.get("type") == "onboarding_done":
-                files_written = ev.get("files", [])
-                all_warnings = ev.get("warnings", [])
-    except Exception as exc:  # noqa: BLE001
-        yield _sse({"type": "error", "message": str(exc)[:400]})
-    return files_written, all_warnings
-
-
-def _orchestrate(ag, payload_str: str, source: str = "ui"):
-    """Yield SSE events for one email: the orchestrator agent classifies the intent
-    and, for contract notes, calls its `run_contract_pipeline` tool — which we execute
-    here (extract -> map -> grouped PIS file -> blob) and feed back to the agent.
-    Pre-onboarding / manual intents stay code-routed to their leaf agents.
-
-    Reused by the UI simulator (/api/stream), real Logic App emails
-    (/api/events/stream) and the headless processor (/api/process).
+    The human-in-the-loop gate PAUSES the workflow (a `request_info` event). This driver
+    brokers the decision through `hitl.py` — blocking until a human decides from the
+    dashboard, or an auto-decision fires after a timeout (short for headless emails, long
+    for interactive UI runs) so nothing hangs forever — then RESUMES the workflow with the
+    response. The exact SSE event contract the frontend expects is preserved. Reused by
+    /api/stream (UI), /api/events/stream (real Logic App emails) and /api/process (headless).
     """
-    id_to_name = _agents_index()
-    name_to_id = {n: i for i, n in id_to_name.items()}
-    orchestrator_id = name_to_id.get(ORCHESTRATOR_NAME)
-    contract_id = name_to_id.get("contract-note-ks")
-    if not orchestrator_id:
-        yield _sse({"type": "error", "message": "orchestrator-ks not found"})
-        return
+    import uuid as _uuid
 
+    run_id = _uuid.uuid4().hex[:12]
     try:
         payload = json.loads(payload_str)
     except Exception:  # noqa: BLE001
         payload = {}
     payload_attachments = payload.get("attachmentBlobs") or []
 
-    agents_called: list[str] = []
-    results: list[dict] = []
-    contract_handled = False
-    files_written: list = []
-    all_warnings: list = []
+    state = {"intent": None, "agents": [], "files": 0}
 
     yield _sse(
         {
             "type": "orchestrator_start",
-            "agentId": orchestrator_id,
+            "agentId": run_id,
             "name": ORCHESTRATOR_NAME,
+            "runtime": "MAF workflow (in-process)",
             "ts": time.time(),
         }
     )
     yield _sse({"type": "status", "status": "running", "ts": time.time()})
 
-    # --- Agentic run: the orchestrator decides. If it calls run_contract_pipeline,
-    #     we execute the real pipeline here and submit the summary back. -----------
-    thread = ag.threads.create()
-    ag.messages.create(thread_id=thread.id, role="user", content=payload_str)
-    run = ag.runs.create(thread_id=thread.id, agent_id=orchestrator_id)
-    yield _sse(
-        {
-            "type": "run_created",
-            "threadId": thread.id,
-            "runId": run.id,
-            "status": _status_str(run),
-            "ts": time.time(),
-        }
-    )
+    wf = workflow.build_workflow()
 
-    deadline = time.time() + 180
-    while _status_str(run) in ("queued", "in_progress", "requires_action") and time.time() < deadline:
-        if _status_str(run) == "requires_action":
-            ra = getattr(run, "required_action", None)
-            tool_calls = getattr(getattr(ra, "submit_tool_outputs", None), "tool_calls", []) or []
-            outputs = []
-            for tc in tool_calls:
-                fname = tc.function.name
-                if fname == "run_contract_pipeline":
-                    try:
-                        args = json.loads(tc.function.arguments or "{}")
-                    except Exception:  # noqa: BLE001
-                        args = {}
-                    blobs = (
-                        args.get("attachment_blobs")
-                        or args.get("attachmentBlobs")
-                        or payload_attachments
-                    )
-                    yield _sse({"type": "agent_called", "name": "contract-note-ks", "ts": time.time()})
-                    if "contract-note-ks" not in agents_called:
-                        agents_called.append("contract-note-ks")
-                    fw, ww = yield from _run_contract(ag, contract_id, blobs)
-                    files_written, all_warnings = fw, ww
-                    contract_handled = True
-                    names = ", ".join(
-                        f.get("file", "") if isinstance(f, dict) else str(f) for f in fw
-                    )
-                    summary = f"Wrote {len(fw)} file(s){': ' + names if names else ''}."
-                    if ww:
-                        summary += f" {len(ww)} warning(s)."
-                    outputs.append({"tool_call_id": tc.id, "output": summary})
-                else:
-                    outputs.append({"tool_call_id": tc.id, "output": "unsupported tool"})
-            run = ag.runs.submit_tool_outputs(
-                thread_id=thread.id, run_id=run.id, tool_outputs=outputs
-            )
-        else:
-            time.sleep(0.7)
-            run = ag.runs.get(thread_id=thread.id, run_id=run.id)
+    # 1) Run the workflow until it PAUSES at the human-in-the-loop gate (request_info).
+    pending = None
+    try:
+        for ev in workflow.start_stream(wf, payload_str, source):
+            if getattr(ev, "type", None) == "request_info":
+                pending = (ev.request_id, ev.data)
+                continue
+            sse = _map_workflow_event(ev, state)
+            if sse:
+                yield _sse(sse)
+    except Exception as exc:  # noqa: BLE001
+        yield _sse({"type": "error", "message": str(exc)[:400]})
 
-    status = _status_str(run)
-    err = None
-    if getattr(run, "last_error", None):
-        le = run.last_error
-        err = le.as_dict() if hasattr(le, "as_dict") else str(le)
-
-    if status != "completed":
-        yield _sse(
-            {
-                "type": "done",
-                "status": status,
-                "agentsCalled": agents_called,
-                "finalMessage": "",
-                "error": err,
-                "threadId": thread.id,
-                "ts": time.time(),
-            }
-        )
+    if pending is None:
+        # No approval gate was reached (unexpected) — record what we have and stop.
+        _record(state["intent"], state["agents"], payload_attachments,
+                list(range(state["files"])), source)
         return
 
-    intent, reason = _parse_intent(_agent_reply(ag, thread.id))
-    # If the orchestrator already invoked the contract-note pipeline tool, the email
-    # IS a contract note — trust that over a (sometimes inconsistent) text re-parse,
-    # so we never fall through to the onboarding branch for a contract email.
-    if contract_handled:
-        intent, reason = "contract_note", "contract-note pipeline tool was invoked"
+    request_id, req = pending
+    req = req if isinstance(req, dict) else {}
+
+    # 2) Open the HITL review and BLOCK until a human decides.
+    review = hitl.open_review(
+        run_id,
+        req.get("intent"),
+        req.get("title"),
+        req.get("summary"),
+        req.get("details"),
+        req.get("level"),
+    )
     yield _sse(
         {
-            "type": "intent",
-            "intent": intent,
-            "label": INTENT_LABEL.get(intent, intent),
-            "reason": reason,
+            "type": "awaiting_review",
+            "reviewId": review["id"],
+            "level": review["level"],
+            "levelLabel": review["levelLabel"],
+            "levelBlurb": review["levelBlurb"],
+            "title": req.get("title"),
+            "summary": req.get("summary"),
+            "details": req.get("details"),
+            "intent": req.get("intent"),
+            "ts": time.time(),
+        }
+    )
+    timeout = hitl.TIMEOUT_HEADLESS if source == "logicapp" else hitl.TIMEOUT_UI
+    decided = hitl.wait_for_decision(review["id"], timeout)
+    dec = decided.get("decision") or {}
+    yield _sse(
+        {
+            "type": "review_decided",
+            "reviewId": review["id"],
+            "state": decided.get("state"),
+            "action": dec.get("action"),
+            "by": dec.get("by"),
+            "note": dec.get("note"),
+            "editedIntent": dec.get("editedIntent"),
             "ts": time.time(),
         }
     )
 
-    target = INTENT_TO_AGENT.get(intent, "manual-intervention-ks")
+    # 3) RESUME the workflow with the human decision; stream the rest (pipeline + done).
+    response = {
+        "action": dec.get("action"),
+        "by": dec.get("by"),
+        "note": dec.get("note"),
+        "editedIntent": dec.get("editedIntent"),
+        "state": decided.get("state"),
+    }
+    try:
+        for ev in workflow.resume_stream(wf, {request_id: response}):
+            sse = _map_workflow_event(ev, state)
+            if sse:
+                yield _sse(sse)
+    except Exception as exc:  # noqa: BLE001
+        yield _sse({"type": "error", "message": str(exc)[:400]})
 
-    # Onboarding: two-form cross-verification (web-UI vs handwritten) handled by a
-    # dedicated pipeline (download -> OCR both -> form-compare-ks aligns -> score).
-    # Demo: always process the two fixed sample forms kept under
-    # incoming-attachments/onboarding-samples/ — identical behaviour for an inbound
-    # email and the UI onboarding button. Falls back to the email's own attachments
-    # only if that demo folder is empty.
-    if intent == "pre_onboarding":
-        compare_id = name_to_id.get("form-compare-ks")
-        from onboarding_pipeline import demo_attachments
+    _record(state["intent"], state["agents"], payload_attachments,
+            list(range(state["files"])), source)
 
-        try:
-            demo = demo_attachments()
-        except Exception:  # noqa: BLE001
-            demo = []
-        blobs = demo or payload_attachments
-        if not compare_id:
-            yield _sse({"type": "error", "message": "form-compare-ks not found"})
-        else:
-            yield _sse(
-                {
-                    "type": "onboarding_source",
-                    "usingDemo": bool(demo),
-                    "files": [b.rsplit("/", 1)[-1] for b in blobs],
-                    "ts": time.time(),
-                }
-            )
-            yield _sse({"type": "agent_called", "name": "form-compare-ks", "ts": time.time()})
-            agents_called.append("form-compare-ks")
-            fw, ww = yield from _run_onboarding(ag, compare_id, blobs)
-            files_written, all_warnings = fw, ww
-            results.append(
-                {"agent": "form-compare-ks", "files": files_written, "warnings": all_warnings}
-            )
-        final = {"intent": intent, "delegated_to": agents_called, "results": results}
-        _record(intent, agents_called, blobs, files_written, source)
-        yield _sse(
-            {
-                "type": "done",
-                "status": "completed",
-                "intent": intent,
-                "agentsCalled": agents_called,
-                "finalMessage": json.dumps(final, indent=2),
-                "error": None,
-                "threadId": thread.id,
-                "ts": time.time(),
-            }
-        )
-        return
 
-    # Contract notes are handled by the agent's tool call above. If the model
-    # classified contract_note but didn't call the tool, run the pipeline in code.
-    if intent == "contract_note":
-        if not contract_handled:
-            yield _sse({"type": "agent_called", "name": "contract-note-ks", "ts": time.time()})
-            if "contract-note-ks" not in agents_called:
-                agents_called.append("contract-note-ks")
-            fw, ww = yield from _run_contract(ag, contract_id, payload_attachments)
-            files_written, all_warnings = fw, ww
-        results.append(
-            {"agent": "contract-note-ks", "files": files_written, "warnings": all_warnings}
-        )
-        final = {"intent": intent, "delegated_to": agents_called, "results": results}
-        _record(intent, agents_called, payload_attachments, files_written, source)
-        yield _sse(
-            {
-                "type": "done",
-                "status": "completed",
-                "intent": intent,
-                "agentsCalled": agents_called,
-                "finalMessage": json.dumps(final, indent=2),
-                "error": None,
-                "threadId": thread.id,
-                "ts": time.time(),
-            }
-        )
-        return
 
-    # pre_onboarding / manual: code-routed leaf agents.
-    yield _sse({"type": "agent_called", "name": target, "ts": time.time()})
-    agents_called.append(target)
-    spec = _run_agent(ag, name_to_id[target], payload_str)
-    yield _sse(
-        {
-            "type": "result",
-            "agent": target,
-            "status": spec["status"],
-            "text": spec["text"],
-            "error": spec["error"],
-            "ts": time.time(),
-        }
-    )
-    results.append({"agent": target, "result": spec["text"]})
-
-    if intent == "pre_onboarding" and spec["status"] == "completed":
-        fv = "form-verification-ks"
-        yield _sse({"type": "agent_called", "name": fv, "ts": time.time()})
-        agents_called.append(fv)
-        fvr = _run_agent(ag, name_to_id[fv], spec["text"] or payload_str)
-        yield _sse(
-            {
-                "type": "result",
-                "agent": fv,
-                "status": fvr["status"],
-                "text": fvr["text"],
-                "error": fvr["error"],
-                "ts": time.time(),
-            }
-        )
-        results.append({"agent": fv, "result": fvr["text"]})
-
-    final = {"intent": intent, "delegated_to": agents_called, "results": results}
-    _record(intent, agents_called, payload_attachments, [], source)
-    yield _sse(
-        {
-            "type": "done",
-            "status": "completed",
-            "intent": intent,
-            "agentsCalled": agents_called,
-            "finalMessage": json.dumps(final, indent=2),
-            "error": None,
-            "threadId": thread.id,
-            "ts": time.time(),
-        }
-    )
 
 
 
@@ -798,30 +585,46 @@ def _reconstruct_email_from_run(run_name: str) -> dict | None:
 # --------------------------------------------------------------------------- #
 @app.get("/api/agents")
 def api_agents():
-    out = []
-    for a in client().list_agents():
-        d = a.as_dict()
-        tools = [t.get("type") for t in d.get("tools", [])]
-        connected = [
-            t.get("connected_agent", {}).get("name")
-            for t in d.get("tools", [])
-            if t.get("type") == "connected_agent"
-        ]
-        out.append(
-            {
-                "id": a.id,
-                "name": a.name,
-                "model": d.get("model"),
-                "tools": tools,
-                "connected": [c for c in connected if c],
-            }
-        )
-    return {"agents": out}
+    return {"agents": maf_agents.list_agents()}
 
 
 @app.get("/api/samples")
 def api_samples():
     return {"samples": {k: v["subject"] for k, v in SAMPLES.items()}}
+
+
+# --------------------------------------------------------------------------- #
+# Human-in-the-loop review queue
+# --------------------------------------------------------------------------- #
+@app.get("/api/hitl/queue")
+def api_hitl_queue():
+    """Items currently awaiting a human decision (the live review queue)."""
+    return {"awaiting": hitl.list_reviews("awaiting")}
+
+
+@app.get("/api/hitl/history")
+def api_hitl_history():
+    """Recently decided review items (approved/rejected), newest first."""
+    return {"history": hitl.history()}
+
+
+@app.post("/api/hitl/decision")
+async def api_hitl_decision(request: Request):
+    """Record a human decision (approve | reject | edit) — unblocks the waiting run."""
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    rec = hitl.decide(
+        (body.get("reviewId") or "").strip(),
+        (body.get("action") or "").strip(),
+        by=(body.get("by") or "reviewer").strip(),
+        note=(body.get("note") or "").strip(),
+        edited_intent=body.get("editedIntent"),
+    )
+    if not rec:
+        return JSONResponse({"error": "unknown review id or already decided"}, status_code=400)
+    return {"review": rec}
 
 
 @app.get("/api/logicapp/runs")
@@ -953,7 +756,7 @@ def api_stream(
         )
 
         try:
-            yield from _orchestrate(client(), json.dumps(payload), source="ui")
+            yield from _orchestrate(json.dumps(payload), source="ui")
         except Exception as exc:  # noqa: BLE001
             yield _sse({"type": "error", "message": str(exc)[:400]})
 
@@ -1033,7 +836,7 @@ async def api_process(request: Request):
     status = "completed"
     error = None
     try:
-        for chunk in _orchestrate(client(), json.dumps(payload), source="logicapp"):
+        for chunk in _orchestrate(json.dumps(payload), source="logicapp"):
             try:
                 ev = json.loads(chunk[6:].strip())
             except Exception:  # noqa: BLE001

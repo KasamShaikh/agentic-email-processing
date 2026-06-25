@@ -16,6 +16,63 @@ detailed below.
 
 ---
 
+## v2 — Microsoft Agent Framework runtime (current) ✅
+
+The agent runtime has been **rebuilt on the open-source Microsoft Agent Framework
+(MAF)**. Instead of Foundry-hosted agents called over the Agents Service REST API (v1),
+the agents now run **in-process** and are wired into a **true MAF `Workflow` graph** —
+executors connected by switch-case edges, with a **native human-in-the-loop gate** and
+**file-backed checkpointing**. The model is still served by Foundry (`gpt-mini-ks`);
+only the orchestration moved into code.
+
+### What changed vs v1
+
+| | v1 (Foundry-hosted) | v2 (Microsoft Agent Framework) |
+|---|---|---|
+| Agent runtime | Remote agents in the Foundry project (`azure-ai-agents`) | In-process `Agent` objects (`agent-framework`) |
+| Orchestration | Code-driven routing after a classify call | A real MAF `Workflow` graph (executors + switch-case edges) |
+| Human approval | — | **Native HITL** — the workflow pauses on `request_info` |
+| Durability | — | **`FileCheckpointStorage`** — a checkpoint per superstep |
+| Tools | Code Interpreter (server-side) | Real in-process tool `lookup_isin` (NSE/BSE security master) |
+
+### Workflow graph
+
+```mermaid
+flowchart TD
+    E[✉ Email payload] --> O[orchestrator-ks<br/>classify intent]
+    O --> G{{HITL gate<br/>request_info · L1/L2/L3}}
+    G -->|approve · contract_note| C[contract-note-ks<br/>+ lookup_isin tool]
+    G -->|approve · pre_onboarding| F[form-compare-ks<br/>OCR + deterministic scorer]
+    G -->|approve · manual| M[manual-intervention-ks]
+    G -->|reject| X[stop · no pipeline]
+```
+
+The **orchestrator** classifies the email intent (no tools). The run then pauses at
+**one** human-in-the-loop gate whose level is set by the intent — 🔴 **L1** contract note
+(final sign-off), 🟠 **L2** onboarding (maker review), 🟢 **L3** manual (exception check).
+On approval, **switch-case edges** route to the matching specialist executor, which runs
+the existing deterministic pipeline; on reject the run stops. Every superstep is
+checkpointed to file-backed storage, and the gate auto-decides after the review window
+(~15 min in the UI) so nothing hangs.
+
+> Four executors actually run the graph (`orchestrator-ks`, `contract-note-ks`,
+> `form-compare-ks`, `manual-intervention-ks`). Two further prompts ship in `agents/`
+> (`pre_onboarding.md`, `form_verification.md`) for a future multi-step onboarding flow
+> but are not wired into the current graph.
+
+### New / changed files
+
+| File | Purpose |
+|------|---------|
+| [`dashboard/workflow.py`](./dashboard/workflow.py) | The MAF `Workflow`: executors, switch-case routing, native `request_info` HITL gate, `FileCheckpointStorage`, sync queue-bridge driver |
+| [`dashboard/maf_agents.py`](./dashboard/maf_agents.py) | Builds in-process `Agent` objects from the `agents/*.md` prompts; real `lookup_isin` tool; `AzureOpenAIChatClient` (`gpt-mini-ks`) |
+| [`dashboard/hitl.py`](./dashboard/hitl.py) | Human-in-the-loop review queue + decision/audit bridge; L1/L2/L3 level labels; review-window timeouts |
+| [`dashboard/app.py`](./dashboard/app.py) | Rewired to drive the workflow (`/api/stream`), forward SSE, and expose the HITL endpoints |
+| [`dashboard/doc_extract.py`](./dashboard/doc_extract.py) | Shared blob + Document Intelligence extraction — now **retried with backoff** on transient transport resets |
+| [`aboutus.html`](./aboutus.html) | Standalone “About” page (also embedded in the dashboard) explaining the v2 runtime |
+
+---
+
 ## Phase 1 — Provision foundation (Bicep) ✅ Deployed
 
 Phase 1 is deployed as **Infrastructure-as-Code** (Bicep) instead of manual portal
@@ -253,20 +310,27 @@ python agents/test_contract_note.py --live "<path-to-pdf-or-image>"
 ## Live Operations Dashboard (UI) ✅
 
 A lightweight, single-screen dashboard that visualises the **whole flow in real time**
-— email received → orchestrator classifies intent → which specialist agent fired →
-per-agent output → final result — so you can test and observe routing without sending a
-real email or reading terminal logs. It also surfaces the **real Logic App run history**.
+— email received → orchestrator classifies intent → **human-in-the-loop approval gate**
+→ which specialist executor fired → per-agent output → final result — so you can test
+and observe routing (and exercise the live HITL gate) without sending a real email or
+reading terminal logs. It also surfaces the **real Logic App run history**.
 
 | File | Purpose |
 |------|---------|
-| [`dashboard/app.py`](./dashboard/app.py) | FastAPI backend: agent inventory, sample emails, **SSE live-trace** stream (code-driven routing), Logic App run history |
-| [`dashboard/static/index.html`](./dashboard/static/index.html) | Single-page UI (vanilla JS + SSE), Axis Bank visual tone |
-| [`dashboard/requirements.txt`](./dashboard/requirements.txt) | `fastapi`, `uvicorn`, `azure-ai-agents`, `azure-identity`, `azure-storage-blob`, `azure-ai-documentintelligence` |
+| [`dashboard/app.py`](./dashboard/app.py) | FastAPI backend: drives the MAF **workflow** per email, **SSE live-trace** stream, HITL review endpoints, Logic App run history |
+| [`dashboard/workflow.py`](./dashboard/workflow.py) | MAF `Workflow` graph — executors, switch-case routing, native `request_info` HITL gate, file-backed checkpoints |
+| [`dashboard/maf_agents.py`](./dashboard/maf_agents.py) | In-process `Agent` builders (from `agents/*.md`) + real `lookup_isin` tool |
+| [`dashboard/hitl.py`](./dashboard/hitl.py) | Human-in-the-loop review queue, decision bridge, L1/L2/L3 levels + timeouts |
+| [`dashboard/static/index.html`](./dashboard/static/index.html) | Single-page UI (vanilla JS + SSE): Live Flow, HITL approval cards, About tab |
+| [`dashboard/requirements.txt`](./dashboard/requirements.txt) | `agent-framework-{core,azure-ai,openai}==1.0.0rc6`, `fastapi`, `uvicorn`, `azure-identity`, `azure-storage-blob`, `azure-ai-documentintelligence` |
 
 ### Run it
 
 ```powershell
 az login                                   # data-plane auth (Cognitive Services User)
+# Use an isolated venv — the Microsoft Agent Framework stack is pinned to rc6
+python -m venv dashboard/.venv
+dashboard/.venv/Scripts/Activate.ps1
 pip install -r dashboard/requirements.txt
 python -m uvicorn app:app --port 8000 --app-dir dashboard
 # then open http://localhost:8000
@@ -277,13 +341,14 @@ python -m uvicorn app:app --port 8000 --app-dir dashboard
 - **Simulate an email** (left) — pick a built-in sample (Contract Note / Merchant
   Pre-Onboarding / Manual) or paste a custom email body, then **Run through the flow**.
 - **Live run trace** (centre) — a streaming timeline (Server-Sent Events): 📧 email
-  received → ◎ orchestrator invoked → ◆ intent classified → → routed-to-specialist →
-  △ each agent's actual output → ✔ final JSON summary. A status pill animates
-  idle → running → completed / failed.
+  received → ◎ orchestrator classifies → ⏸ **HITL gate** (the run pauses on an approval
+  card; Approve / Reject / Re-route) → → routed-to-specialist → △ each agent's actual
+  output → ✔ final JSON summary. A status pill animates idle → running → **paused** →
+  completed / failed / rejected.
 - **Routing map** (right) — the orchestrator → specialists flow diagram whose nodes
-  **light up** as each agent fires.
-- **Agent inventory** (left) and **Logic App runs** (right) — live from Foundry and the
-  real Logic App run history (via `az rest`).
+  **light up** as each executor fires.
+- **Agent inventory** (left) and **Logic App runs** (right) — live from the workflow and
+  the real Logic App run history (via `az rest`).
 
 ### API endpoints
 
@@ -291,8 +356,10 @@ python -m uvicorn app:app --port 8000 --app-dir dashboard
 |----------|---------|
 | `GET /api/agents` | Agent inventory (name, model, tools) |
 | `GET /api/samples` | Built-in sample email subjects |
-| `GET /api/stream?sample=contract\|onboarding\|manual` | **SSE** live trace of one run (also accepts `?text=<custom body>`) |
-| `GET /api/logicapp/runs` | Recent real Logic App runs (status + timestamps) |
+| `GET /api/stream?sample=contract\|onboarding\|manual` | **SSE** live trace of one run — pauses at the HITL gate (also accepts `?text=<custom body>`) |
+| `GET /api/hitl/queue` · `GET /api/hitl/history` | Pending review items / decided-review audit log |
+| `POST /api/hitl/decision` | Approve / reject / re-route a paused run (resumes the workflow) |
+| `GET /api/events/stream` · `GET /api/logicapp/runs` | Live trace of a real Logic App email run / recent Logic App runs |
 
 ### Security
 

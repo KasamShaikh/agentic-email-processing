@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import json
 import os
+import time
 
+from azure.core.exceptions import ServiceRequestError, ServiceResponseError
 from azure.identity import DefaultAzureCredential
 
 DOCINTEL_ENDPOINT = os.getenv(
@@ -58,6 +60,25 @@ def _docintel():
     return _doc_client
 
 
+# Transient transport failures (e.g. a TLS/TCP reset mid-request — Windows socket
+# error 10054, surfaced by the SDK as ServiceResponseError) are retried with a short
+# exponential backoff so a single dropped connection doesn't fail the whole run.
+_RETRYABLE = (ServiceRequestError, ServiceResponseError, ConnectionError)
+
+
+def _with_retry(fn, *, attempts: int = 3, base_delay: float = 1.5):
+    last_exc: Exception | None = None
+    for i in range(attempts):
+        try:
+            return fn()
+        except _RETRYABLE as exc:  # noqa: PERF203
+            last_exc = exc
+            if i == attempts - 1:
+                break
+            time.sleep(base_delay * (2 ** i))
+    raise last_exc
+
+
 def split_path(path: str) -> tuple[str, str]:
     """`onboarding/Web-portal.pdf` -> ('onboarding', 'Web-portal.pdf').
 
@@ -80,19 +101,22 @@ def download_blob(path: str) -> bytes:
     """Download a container-qualified blob as bytes."""
     container, blob = split_path(path)
     client = _blob().get_blob_client(container=container, blob=blob)
-    return client.download_blob().readall()
+    return _with_retry(lambda: client.download_blob().readall())
 
 
 def analyze_document(data: bytes) -> str:
     """Document content as markdown (tables/handwriting preserved) via prebuilt-layout."""
     from azure.ai.documentintelligence.models import AnalyzeDocumentRequest
 
-    poller = _docintel().begin_analyze_document(
-        "prebuilt-layout",
-        AnalyzeDocumentRequest(bytes_source=data),
-        output_content_format="markdown",
-    )
-    return poller.result().content or ""
+    def _run() -> str:
+        poller = _docintel().begin_analyze_document(
+            "prebuilt-layout",
+            AnalyzeDocumentRequest(bytes_source=data),
+            output_content_format="markdown",
+        )
+        return poller.result().content or ""
+
+    return _with_retry(_run)
 
 
 def is_text_blob(path: str) -> bool:

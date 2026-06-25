@@ -1,4 +1,9 @@
-azure-ai-agents>=1.0.0
+# Microsoft Agent Framework (in-process agents) — pin the whole stack to the
+# same rc6 generation; the meta `agent-framework` (core 1.9.x) is incompatible
+# with agent-framework-azure-ai rc6.
+agent-framework-core==1.0.0rc6
+agent-framework-azure-ai==1.0.0rc6
+agent-framework-openai==1.0.0rc6
 azure-identity>=1.17.0
 azure-storage-blob>=12.20.0
 azure-ai-documentintelligence>=1.0.0
