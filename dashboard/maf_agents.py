@@ -43,7 +43,27 @@ AOAI_ENDPOINT = os.getenv(
 AOAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-mini-ks")
 AOAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2025-01-01-preview")
 
-AGENTS_DIR = Path(__file__).parent.parent / "agents"
+
+def _resolve_agents_dir() -> Path:
+    """Locate the `agents/` prompt folder.
+
+    In the repo / local layout the prompts live one level up (`../agents`). When only
+    the `dashboard/` folder is published as the app root (e.g. Azure App Service), a
+    sibling copy is bundled at `./agents`. An explicit `AGENTS_DIR` env var always wins.
+    """
+    here = Path(__file__).resolve().parent
+    candidates: list[Path] = []
+    env = os.getenv("AGENTS_DIR")
+    if env:
+        candidates.append(Path(env))
+    candidates += [here.parent / "agents", here / "agents"]
+    for cand in candidates:
+        if cand.is_dir():
+            return cand
+    return here.parent / "agents"
+
+
+AGENTS_DIR = _resolve_agents_dir()
 
 # agent display-name -> prompt file under agents/. Names match the old remote agents
 # so the dashboard, traces and saved data stay consistent.
