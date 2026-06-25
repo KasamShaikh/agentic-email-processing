@@ -78,6 +78,12 @@ AGENT_PROMPTS = {
 
 ORCHESTRATOR_NAME = "orchestrator-ks"
 
+# Agents whose prompts ship in agents/ but are NOT wired into the current MAF workflow
+# graph (onboarding routes to form-compare-ks, not these). Hidden from the inventory +
+# routing map and skipped on warmup; kept in AGENT_PROMPTS so a future multi-step
+# onboarding flow can wire them back in.
+HIDDEN_AGENTS = {"pre-onboarding-ks", "form-verification-ks"}
+
 # The in-process orchestrator only classifies — code routes to the pipelines — so we
 # tell it not to attempt any tool call (the prompt file mentions a tool the remote
 # version used). This keeps Step-3 JSON output clean and deterministic.
@@ -297,6 +303,8 @@ def list_agents() -> list[dict]:
     """Static description of the in-process agents (for the /api/agents view)."""
     out = []
     for name, fname in AGENT_PROMPTS.items():
+        if name in HIDDEN_AGENTS:
+            continue
         out.append(
             {
                 "id": name,
@@ -315,6 +323,8 @@ def warmup() -> None:
     """Eagerly build the client + agents so the first request is fast (best effort)."""
     try:
         for name in AGENT_PROMPTS:
+            if name in HIDDEN_AGENTS:
+                continue
             _agent(name)
     except Exception:  # noqa: BLE001
         pass

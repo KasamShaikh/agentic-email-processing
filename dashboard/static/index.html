@@ -286,9 +286,7 @@
             <div class="node" data-node="orchestrator-ks"><div class="ic">◎</div><div><div class="nm">Orchestrator Agent</div><div class="sub">classifies intent</div></div><span class="chip">idle</span></div>
             <div class="connector"></div>
             <div class="node" data-node="contract-note-ks"><div class="ic">▤</div><div><div class="nm">Contract Note Agent</div><div class="sub">extract & standardise</div></div><span class="chip">idle</span></div>
-            <div class="node" data-node="pre-onboarding-ks"><div class="ic">◍</div><div><div class="nm">Pre-Onboarding Agent</div><div class="sub">extract merchant docs</div></div><span class="chip">idle</span></div>
-            <div class="node indent" data-node="form-compare-ks"><div class="ic">⚖</div><div><div class="nm">Form Comparison Agent</div><div class="sub">cross-verify two forms</div></div><span class="chip">idle</span></div>
-            <div class="node indent" data-node="form-verification-ks"><div class="ic">✓</div><div><div class="nm">Form Verification Agent</div><div class="sub">validate fields</div></div><span class="chip">idle</span></div>
+            <div class="node" data-node="form-compare-ks"><div class="ic">⚖</div><div><div class="nm">Form Comparison Agent</div><div class="sub">cross-verify two forms</div></div><span class="chip">idle</span></div>
             <div class="node" data-node="manual-intervention-ks"><div class="ic">☎</div><div><div class="nm">Manual Intervention Agent</div><div class="sub">route to human</div></div><span class="chip">idle</span></div>
           </div>
         </div>
@@ -729,13 +727,13 @@ let currentSample = "contract";
 let es = null;
 let activeNode = null;
 // classified intent -> the specialist node to light up on the routing map
-const INTENT_NODE = { contract_note:"contract-note-ks", pre_onboarding:"pre-onboarding-ks", manual:"manual-intervention-ks" };
+const INTENT_NODE = { contract_note:"contract-note-ks", pre_onboarding:"form-compare-ks", manual:"manual-intervention-ks" };
 function clearSampleSelection(){ document.querySelectorAll(".sample-btn").forEach(x=>x.classList.remove("active")); }
 // Reset every specialist node except the one the orchestrator actually chose, so
 // the routing map never shows two specialists lit at once.
 function clearSpecialistsExcept(keep){
   const keepers = Array.isArray(keep) ? keep : [keep];
-  ["contract-note-ks","pre-onboarding-ks","form-compare-ks","form-verification-ks","manual-intervention-ks"].forEach(n=>{
+  ["contract-note-ks","form-compare-ks","manual-intervention-ks"].forEach(n=>{
     if(keepers.includes(n)) return;
     const el = $(`.node[data-node="${n}"]`);
     if(el){ el.classList.remove("fired"); const c=el.querySelector(".chip"); if(c) c.textContent="idle"; }
@@ -833,12 +831,9 @@ function handleEvent(ev, btn){
       }
       case "intent": {
         activeNode = INTENT_NODE[ev.intent] || "manual-intervention-ks";
-        // The classified intent is the source of truth. For onboarding we keep BOTH
-        // the Pre-Onboarding and Form Verification nodes lit, because the form
-        // comparison is shown as the validation step in this demo.
-        const keep = ev.intent === "pre_onboarding"
-          ? ["pre-onboarding-ks","form-compare-ks","form-verification-ks"] : activeNode;
-        clearSpecialistsExcept(keep);
+        // The classified intent is the source of truth — onboarding routes to the
+        // Form Comparison node (the executor that actually runs).
+        clearSpecialistsExcept(activeNode);
         const inode = $(`.node[data-node="${activeNode}"]`);
         if(!(inode && inode.classList.contains("fired"))) setNode(activeNode,"routed");
         addEvent("orch","◆ Intent classified", `<span class="tag">${ev.label||ev.intent}</span>${ev.reason?`<br><span class="meta">${escapeHtml(ev.reason)}</span>`:""}`, ev.ts);
@@ -884,13 +879,11 @@ function handleEvent(ev, btn){
         break;
       case "compared":
         setNode("form-compare-ks","comparing");
-        setNode("form-verification-ks","validating");
         addEvent("agent","⚖ Forms compared", `<span class="tag">${escapeHtml(ev.status||"")}</span> match <b>${ev.matchPct}%</b> · <span class="meta">${ev.matched||0} matched · ${ev.near||0} near · ${ev.mismatched||0} mismatched (of ${ev.total||0})</span>`, ev.ts);
         break;
       case "onboarding_done":
-        setNode(activeNode||"pre-onboarding-ks","output");
+        setNode(activeNode||"form-compare-ks","output");
         setNode("form-compare-ks", ev.status || "compared");
-        setNode("form-verification-ks", ev.status || "validated");
         { let ob = `Verdict <b>${escapeHtml(ev.status||"")}</b>${ev.matchPct!=null?` · match <b>${ev.matchPct}%</b>`:""}`;
           if (ev.warnings&&ev.warnings.length) ob += `<div class="err">⚠ ${ev.warnings.map(w=>escapeHtml(w)).join("<br>")}</div>`;
           addEvent("agent","▣ Onboarding complete", ob, ev.ts); }
@@ -1002,9 +995,7 @@ async function loadInventory(){
     const agentDesc = {
       "orchestrator-ks": "Reads each incoming email and classifies its intent, then routes it to the right specialist agent.",
       "contract-note-ks": "Extracts trades from the contract-note attachments (Document Intelligence), resolves ISINs, and writes the pipe-delimited PIS upload file to the contract-notes-output container.",
-      "pre-onboarding-ks": "Verifies merchant pre-onboarding documents and extracts KYC, registration and bank details.",
       "form-compare-ks": "Cross-verifies two versions of a merchant form (web-portal vs handwritten). The LLM aligns the fields semantically; deterministic Python then scores match / near / mismatch — so the agent itself needs no tools.",
-      "form-verification-ks": "Validates the extracted onboarding fields for completeness and correctness.",
       "manual-intervention-ks": "Flags emails that need a human and routes them for manual handling."
     };
     d.agents.sort((a,b)=> a.name==="orchestrator-ks"?-1:1).forEach(a=>{

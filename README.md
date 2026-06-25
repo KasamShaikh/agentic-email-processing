@@ -284,7 +284,7 @@ purchase + one sales file per broker per trade date*) and written as `H`/`T` rec
 | [`agents/contract_note.md`](./agents/contract_note.md) | Extraction-agent instructions — emits strict JSON (no arithmetic/formatting) |
 | [`dashboard/contract_format.py`](./dashboard/contract_format.py) | Deterministic `H`/`T` formatter (spec layout, `Qty*(Rate±Brokerage)`, grouping, ISIN lookup) |
 | [`dashboard/contract_pipeline.py`](./dashboard/contract_pipeline.py) | Blob → Document Intelligence → agent → format → upload (SSE events) |
-| [`agents/security_master.csv`](./agents/security_master.csv) | Seed scrip-name → ISIN master (**replace with Axis's authoritative master**) |
+| [`agents/security_master.csv`](./agents/security_master.csv) | Seed scrip-name → ISIN master (**replace with the bank's authoritative master**) |
 | [`agents/test_contract_note.py`](./agents/test_contract_note.py) | Offline formatter self-test + `--live <file>` end-to-end test |
 
 **Record spec** (from the customer instructions doc): `H` = 12 fields
