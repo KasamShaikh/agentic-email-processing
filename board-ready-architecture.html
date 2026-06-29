@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Agentic Email Processing — Production Architecture</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  :root{
+    --bg:#0b1020; --panel:#121a33; --panel2:#0f1730; --ink:#e8ecf6; --muted:#9aa6c4;
+    --line:#243154; --accent:#4ea1ff; --live:#2bd17e; --slot:#f5c451; --plat:#7aa7ff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(180deg,#0b1020,#0d1430);color:var(--ink);
+    font:15px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  header{padding:28px 32px;border-bottom:1px solid var(--line);background:var(--panel2)}
+  h1{margin:0;font-size:24px} h2{margin:34px 0 12px;font-size:19px}
+  .sub{color:var(--muted);margin-top:6px;max-width:900px}
+  main{max-width:1180px;margin:0 auto;padding:24px 32px 80px}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin:14px 0;color:var(--muted);font-size:13px}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
+  .l1{background:var(--live)} .l2{background:var(--slot)} .l3{background:var(--plat)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;margin:16px 0;
+    box-shadow:0 6px 24px rgba(0,0,0,.25)}
+  .mermaid{background:#0c1430;border-radius:10px;padding:14px;overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:6px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:#16203f;color:#cdd7f0} tr:nth-child(even) td{background:#0f1730}
+  code{background:#1a2545;padding:1px 6px;border-radius:5px;color:#bfe0ff;font-size:12.5px}
+  .pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:12px;font-weight:600}
+  .pl{background:rgba(43,209,126,.15);color:var(--live)} .ps{background:rgba(245,196,81,.15);color:var(--slot)}
+  ul{margin:6px 0} footer{color:var(--muted);font-size:12.5px;border-top:1px solid var(--line);padding-top:14px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Agentic Email Processing — Production-Grade Component Architecture</h1>
+  <p class="sub">Layered view: <b>Data Sources → Ingestion → Orchestration (MAF) → Processing → Human-in-the-Loop → Data &amp; State → Observability</b>, on a shared Identity/Security and Platform/IaC foundation. PoC wires Outlook + Logic Apps + MAF; every other tile is a swappable extension slot.</p>
+  <div class="legend">
+    <span><span class="dot l1"></span>Live in PoC</span>
+    <span><span class="dot l2"></span>Design-ready slot</span>
+    <span><span class="dot l3"></span>Cross-cutting platform</span>
+  </div>
+</header>
+
+<main>
+  <h2>1. Layered component architecture</h2>
+  <div class="card"><div class="mermaid">
+flowchart TB
+  subgraph SRC["①&nbsp;&nbsp;DATA SOURCES"]
+    direction LR
+    S1["Outlook / M365 mailbox"]:::live
+    S2["SharePoint / OneDrive"]:::slot
+    S3["Blob drop / SFTP"]:::slot
+    S4["API / webhook partners"]:::slot
+    S5["Teams / queues"]:::slot
+  end
+  subgraph ING["②&nbsp;&nbsp;INGESTION"]
+    direction LR
+    I1["Logic Apps trigger"]:::live
+    I2["Work IQ / connectors"]:::slot
+    I3["Event Grid / Service Bus"]:::slot
+    I4["Attachment to Blob"]:::live
+  end
+  subgraph ORC["③&nbsp;&nbsp;ORCHESTRATION (MAF)"]
+    direction LR
+    O1["orchestrator-ks classifier"]:::live
+    O2["Workflow graph"]:::live
+    O3["Checkpointing"]:::live
+    O4["gpt-mini-ks model"]:::live
+  end
+  subgraph HIL["④&nbsp;&nbsp;HUMAN-IN-THE-LOOP"]
+    direction LR
+    H1["request_info gate"]:::live
+    H2["L1 / L2 / L3 levels"]:::live
+    H3["Approve · Reject · Re-route"]:::live
+  end
+  subgraph PRC["⑤&nbsp;&nbsp;PROCESSING"]
+    direction LR
+    P1["contract-note-ks"]:::live
+    P2["form-compare-ks"]:::live
+    P3["manual-intervention-ks"]:::live
+    P4["Doc Intelligence"]:::live
+  end
+  subgraph DAT["⑥&nbsp;&nbsp;DATA &amp; STATE"]
+    direction LR
+    D1["incoming-attachments"]:::live
+    D2["contract-notes-output"]:::live
+    D3["ISIN master"]:::live
+    D4["audit / checkpoints"]:::live
+  end
+  subgraph OBS["⑦&nbsp;&nbsp;OBSERVABILITY"]
+    direction LR
+    B1["SSE live trace"]:::live
+    B2["Run + HITL audit"]:::live
+    B3["App Insights / OTel"]:::slot
+    B4["Log Analytics / alerts"]:::slot
+  end
+  SEC["IDENTITY &amp; SECURITY — Managed Identity · RBAC · Key Vault · TLS · private endpoints"]:::plat
+  PLT["PLATFORM &amp; IaC — Bicep · agent SDK script · azd · CI/CD"]:::plat
+  SRC --> ING --> ORC --> HIL --> PRC --> DAT
+  ORC -. emits .-> OBS
+  PRC -. emits .-> OBS
+  PLT --- SEC
+  classDef live fill:#11351f,stroke:#2bd17e,color:#d7ffe8;
+  classDef slot fill:#3a2f10,stroke:#f5c451,color:#fff3d1;
+  classDef plat fill:#16224a,stroke:#7aa7ff,color:#dbe7ff;
+  </div></div>
+
+  <h2>2. Layer-by-layer catalogue</h2>
+  <div class="card"><table>
+    <tr><th>#</th><th>Layer</th><th>Live (PoC)</th><th>Extension slots</th><th>Job</th></tr>
+    <tr><td>①</td><td>Data Sources</td><td>Outlook / M365</td><td>SharePoint, SFTP, webhooks, Teams</td><td>Where work arrives</td></tr>
+    <tr><td>②</td><td>Ingestion</td><td>Logic Apps → Blob</td><td>Work IQ, Event Grid, Service Bus</td><td>Capture, persist, hand off</td></tr>
+    <tr><td>③</td><td>Orchestration (MAF)</td><td>classifier, workflow, checkpoints, gpt-mini-ks</td><td>fan-out, retries, sub-workflows</td><td>Decide intent, route, durable state</td></tr>
+    <tr><td>④</td><td>Human-in-the-Loop</td><td>gate, L1/L2/L3, approve/reject/re-route</td><td>Teams cards, role-based approval</td><td>Risk-graded sign-off</td></tr>
+    <tr><td>⑤</td><td>Processing</td><td>contract-note, form-compare, manual, Doc Intelligence</td><td>onboarding chain, browser automation</td><td>Deterministic pipelines</td></tr>
+    <tr><td>⑥</td><td>Data &amp; State</td><td>incoming, output, ISIN, checkpoints</td><td>Cosmos/SQL audit, vector index</td><td>Inputs, outputs, durability</td></tr>
+    <tr><td>⑦</td><td>Observability</td><td>SSE trace, audit, dashboard</td><td>App Insights, Log Analytics, alerts</td><td>See, audit, alert</td></tr>
+  </table></div>
+
+  <h2>3. Request flow</h2>
+  <div class="card"><div class="mermaid">
+sequenceDiagram
+  participant M as ① Outlook
+  participant L as ② Logic Apps
+  participant B as ⑥ Blob
+  participant O as ③ Orchestrator (MAF)
+  participant H as ④ HITL
+  participant S as ⑤ Specialist
+  participant X as ⑦ Observability
+  M->>L: new email + attachments
+  L->>B: PDFs to incoming-attachments
+  L->>O: payload
+  O->>O: classify + checkpoint
+  O->>H: request_info (L1/L2/L3)
+  H-->>O: approve / reject / re-route
+  O->>S: switch-case route
+  S->>B: PIS files to output
+  O-->>X: trace + audit
+  </div></div>
+
+  <h2>4. Production hardening</h2>
+  <div class="card"><ul>
+    <li><b>Identity:</b> managed identity everywhere; no keys/subscription IDs on disk.</li>
+    <li><b>Resilience:</b> checkpoint per superstep, retry-with-backoff on Doc Intelligence, HITL auto-decide on timeout.</li>
+    <li><b>Auditability:</b> processed/HITL/checkpoint journals + SSE trace; ready for App Insights + Log Analytics.</li>
+    <li><b>Network (next):</b> private endpoints + VNet, Key Vault for secrets.</li>
+    <li><b>Deploy:</b> Bicep control-plane, versioned SDK script data-plane — fully repeatable.</li>
+  </ul></div>
+
+  <footer>PoC = <span class="pill pl">live</span> Outlook → Logic Apps → MAF → HITL → specialists → storage + live trace · <span class="pill ps">slots</span> scale to multi-source production. Source: <code>board-ready-architecture.md</code></footer>
+</main>
+
+<script>
+  mermaid.initialize({startOnLoad:true,theme:"dark",securityLevel:"loose",flowchart:{useMaxWidth:true,htmlLabels:true}});
+</script>
+</body>
+</html>

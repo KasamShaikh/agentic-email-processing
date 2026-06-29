@@ -204,6 +204,132 @@
       </div>
     </section>
 
+    <section class="card">
+      <h2>▦ Component level architecture <span style="font-size:10px;font-weight:700;background:#fdf2f7;border:1px solid var(--line);color:var(--maroon-deep);padding:3px 9px;border-radius:20px;letter-spacing:.4px;text-transform:none">Microsoft + open-source</span></h2>
+      <div class="body">
+        <p>Seven swappable layers. Each band runs on a <b>Microsoft / Azure</b> component today, with a permissive-licence <b>open-source</b> drop-in that fits behind the same interface — <b>MAF stays the orchestration runtime</b> in every case. Tile colour shows the choice: maroon = Microsoft (live), dashed = open-source option.</p>
+        <div class="legend" style="display:flex;gap:18px;flex-wrap:wrap;margin:10px 0 4px;font-size:11.5px;color:var(--muted)">
+          <span><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:linear-gradient(100deg,#7A0F3E,#E5007D);margin-right:5px;vertical-align:middle"></span>Microsoft / Azure · live</span>
+          <span><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:#fff;border:1.6px dashed #b56b90;margin-right:5px;vertical-align:middle"></span>Open-source option</span>
+        </div>
+        <svg class="arch" viewBox="0 0 980 720" role="img" aria-label="Component level architecture, Microsoft stack with open-source options">
+          <defs>
+            <linearGradient id="cg" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stop-color="#7A0F3E"/><stop offset="1" stop-color="#E5007D"/>
+            </linearGradient>
+            <marker id="ahc" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+              <path d="M0,0 L7,3 L0,6 Z" fill="#b56b90"/>
+            </marker>
+          </defs>
+
+          <!-- layer 1 · data sources -->
+          <rect x="16" y="16" width="150" height="80" rx="12" fill="#fdf2f7" stroke="var(--line)"/>
+          <text class="lbl" x="91" y="50" text-anchor="middle">① DATA SOURCES</text>
+          <text class="s" x="91" y="68" text-anchor="middle">where work arrives</text>
+          <rect x="186" y="16" width="370" height="80" rx="12" fill="url(#cg)"/>
+          <text x="371" y="46" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">Office 365 · Outlook mailbox</text>
+          <text x="371" y="66" text-anchor="middle" fill="#fff" font-size="11" opacity=".9">SharePoint · OneDrive · Teams</text>
+          <rect x="576" y="16" width="388" height="80" rx="12" fill="#fff" stroke="#b56b90" stroke-width="1.6" stroke-dasharray="6 4"/>
+          <text class="t" x="770" y="46" text-anchor="middle">IMAP · SFTP / MinIO · webhook</text>
+          <text class="s" x="770" y="66" text-anchor="middle">partner API · message queue</text>
+
+          <!-- layer 2 · ingestion -->
+          <rect x="16" y="106" width="150" height="80" rx="12" fill="#fdf2f7" stroke="var(--line)"/>
+          <text class="lbl" x="91" y="140" text-anchor="middle">② INGESTION</text>
+          <text class="s" x="91" y="158" text-anchor="middle">capture · stage</text>
+          <rect x="186" y="106" width="370" height="80" rx="12" fill="url(#cg)"/>
+          <text x="371" y="136" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">Logic Apps · Work IQ · Event Grid</text>
+          <text x="371" y="156" text-anchor="middle" fill="#fff" font-size="11" opacity=".9">attachment → Blob landing</text>
+          <rect x="576" y="106" width="388" height="80" rx="12" fill="#fff" stroke="#b56b90" stroke-width="1.6" stroke-dasharray="6 4"/>
+          <text class="t" x="770" y="136" text-anchor="middle">FastAPI ingest · Kafka / Redis</text>
+          <text class="s" x="770" y="156" text-anchor="middle">→ MinIO object store</text>
+
+          <!-- layer 3 · orchestration -->
+          <rect x="16" y="196" width="150" height="80" rx="12" fill="#fdf2f7" stroke="var(--line)"/>
+          <text class="lbl" x="91" y="230" text-anchor="middle">③ ORCHESTRATION</text>
+          <text class="s" x="91" y="248" text-anchor="middle">decide · route · state</text>
+          <rect x="186" y="196" width="370" height="80" rx="12" fill="url(#cg)"/>
+          <text x="371" y="226" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">Microsoft Agent Framework</text>
+          <text x="371" y="246" text-anchor="middle" fill="#fff" font-size="11" opacity=".9">workflow graph · checkpoints · gpt-mini-ks</text>
+          <rect x="576" y="196" width="388" height="80" rx="12" fill="#fff" stroke="#b56b90" stroke-width="1.6" stroke-dasharray="6 4"/>
+          <text class="t" x="770" y="226" text-anchor="middle">MAF stays · model swaps</text>
+          <text class="s" x="770" y="246" text-anchor="middle">Mistral / Phi / Qwen · vLLM / Ollama</text>
+
+          <!-- layer 4 · HITL -->
+          <rect x="16" y="286" width="150" height="80" rx="12" fill="#fdf2f7" stroke="var(--line)"/>
+          <text class="lbl" x="91" y="320" text-anchor="middle">④ HUMAN-IN-LOOP</text>
+          <text class="s" x="91" y="338" text-anchor="middle">L1 · L2 · L3 gate</text>
+          <rect x="186" y="286" width="370" height="80" rx="12" fill="url(#cg)"/>
+          <text x="371" y="316" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">MAF request_info gate</text>
+          <text x="371" y="336" text-anchor="middle" fill="#fff" font-size="11" opacity=".9">approve · reject · re-route</text>
+          <rect x="576" y="286" width="388" height="80" rx="12" fill="#fff" stroke="#b56b90" stroke-width="1.6" stroke-dasharray="6 4"/>
+          <text class="t" x="770" y="316" text-anchor="middle">Teams / email approvals</text>
+          <text class="s" x="770" y="336" text-anchor="middle">React queue + Postgres</text>
+
+          <!-- layer 5 · processing -->
+          <rect x="16" y="376" width="150" height="80" rx="12" fill="#fdf2f7" stroke="var(--line)"/>
+          <text class="lbl" x="91" y="410" text-anchor="middle">⑤ PROCESSING</text>
+          <text class="s" x="91" y="428" text-anchor="middle">extract · score · OCR</text>
+          <rect x="186" y="376" width="370" height="80" rx="12" fill="url(#cg)"/>
+          <text x="371" y="406" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">Specialists + Document Intelligence</text>
+          <text x="371" y="426" text-anchor="middle" fill="#fff" font-size="11" opacity=".9">contract-note · form-compare · manual</text>
+          <rect x="576" y="376" width="388" height="80" rx="12" fill="#fff" stroke="#b56b90" stroke-width="1.6" stroke-dasharray="6 4"/>
+          <text class="t" x="770" y="406" text-anchor="middle">Docling · PaddleOCR · Tesseract</text>
+          <text class="s" x="770" y="426" text-anchor="middle">+ NeMo / Guardrails AI</text>
+
+          <!-- layer 6 · data & state -->
+          <rect x="16" y="466" width="150" height="80" rx="12" fill="#fdf2f7" stroke="var(--line)"/>
+          <text class="lbl" x="91" y="500" text-anchor="middle">⑥ DATA &amp; STATE</text>
+          <text class="s" x="91" y="518" text-anchor="middle">in · out · audit</text>
+          <rect x="186" y="466" width="370" height="80" rx="12" fill="url(#cg)"/>
+          <text x="371" y="496" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">Blob · ISIN master · checkpoints</text>
+          <text x="371" y="516" text-anchor="middle" fill="#fff" font-size="11" opacity=".9">incoming · contract-notes-output</text>
+          <rect x="576" y="466" width="388" height="80" rx="12" fill="#fff" stroke="#b56b90" stroke-width="1.6" stroke-dasharray="6 4"/>
+          <text class="t" x="770" y="496" text-anchor="middle">MinIO + PostgreSQL (pgvector)</text>
+          <text class="s" x="770" y="516" text-anchor="middle">append-only audit log</text>
+
+          <!-- layer 7 · observability -->
+          <rect x="16" y="556" width="150" height="80" rx="12" fill="#fdf2f7" stroke="var(--line)"/>
+          <text class="lbl" x="91" y="590" text-anchor="middle">⑦ OBSERVABILITY</text>
+          <text class="s" x="91" y="608" text-anchor="middle">see · audit · alert</text>
+          <rect x="186" y="556" width="370" height="80" rx="12" fill="url(#cg)"/>
+          <text x="371" y="586" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">SSE trace · App Insights · Monitor</text>
+          <text x="371" y="606" text-anchor="middle" fill="#fff" font-size="11" opacity=".9">run + HITL audit</text>
+          <rect x="576" y="556" width="388" height="80" rx="12" fill="#fff" stroke="#b56b90" stroke-width="1.6" stroke-dasharray="6 4"/>
+          <text class="t" x="770" y="586" text-anchor="middle">OpenTelemetry → Langfuse / Phoenix</text>
+          <text class="s" x="770" y="606" text-anchor="middle">promptfoo · RAGAS eval</text>
+
+          <!-- foundation -->
+          <rect x="16" y="652" width="948" height="52" rx="12" fill="#fff" stroke="var(--line)"/>
+          <text class="t" x="490" y="674" text-anchor="middle">🔵 Identity &amp; Security — Entra managed identity · RBAC · Key Vault · TLS · private endpoints</text>
+          <text class="s" x="490" y="692" text-anchor="middle">Platform &amp; IaC — Bicep (infra) · agent SDK script (data-plane) · containerise with Docker/Podman → AKS</text>
+
+          <!-- flow arrows -->
+          <path class="ln" d="M371,96 V106" marker-end="url(#ahc)"/>
+          <path class="ln" d="M371,186 V196" marker-end="url(#ahc)"/>
+          <path class="ln" d="M371,276 V286" marker-end="url(#ahc)"/>
+          <path class="ln" d="M371,366 V376" marker-end="url(#ahc)"/>
+          <path class="ln" d="M371,456 V466" marker-end="url(#ahc)"/>
+          <path class="ln" d="M371,546 V556" marker-end="url(#ahc)"/>
+        </svg>
+        <p class="meta" style="margin-top:10px">Read top-to-bottom: <b>sources → ingestion → orchestration → human gate → processing → data → observability</b>, all on a shared identity / IaC foundation. The maroon column is what runs today; the dashed column is the BFSI-friendly open-source swap-in for each layer — pick any subset without touching MAF.</p>
+        <table style="margin-top:14px">
+          <thead><tr><th>Layer</th><th>Microsoft / Azure (live)</th><th>Open-source option</th><th>License</th></tr></thead>
+          <tbody>
+            <tr><td><b>① Data sources</b></td><td>Office 365 · Outlook · SharePoint · Teams</td><td>IMAP/SMTP · MinIO drop · SFTP · partner webhook</td><td>MIT / Apache-2.0</td></tr>
+            <tr><td><b>② Ingestion</b></td><td>Logic Apps · Work IQ · Event Grid</td><td>FastAPI listener · Kafka / Redis Streams</td><td>Apache-2.0</td></tr>
+            <tr><td><b>③ Orchestration</b></td><td><b>Microsoft Agent Framework</b> · gpt-mini-ks (Foundry)</td><td><b>MAF unchanged</b> + Mistral / Phi / Qwen via vLLM / Ollama</td><td>MIT · Apache-2.0</td></tr>
+            <tr><td><b>④ Human-in-loop</b></td><td><code>request_info</code> gate · dashboard L1/L2/L3</td><td>Teams/email approvals · React queue + Postgres</td><td>MIT / PostgreSQL</td></tr>
+            <tr><td><b>⑤ Processing</b></td><td>Document Intelligence · MAF specialists</td><td>Docling · PaddleOCR · Tesseract · NeMo Guardrails</td><td>MIT / Apache-2.0</td></tr>
+            <tr><td><b>⑥ Data &amp; state</b></td><td>Blob · file checkpoints · ISIN master</td><td>MinIO · PostgreSQL + pgvector</td><td>Apache-2.0 / PostgreSQL</td></tr>
+            <tr><td><b>⑦ Observability</b></td><td>App Insights · Azure Monitor · SSE trace</td><td>OpenTelemetry → Langfuse / Phoenix · promptfoo</td><td>Apache-2.0 / MIT</td></tr>
+            <tr><td><b>Foundation</b></td><td>Entra MI · Key Vault · Bicep · AKS</td><td>Docker / Podman → AKS · OPA policy</td><td>Apache-2.0</td></tr>
+          </tbody>
+        </table>
+        <div class="callout" style="margin-top:12px"><b>Pick where it matters:</b> stay all-Microsoft for fastest delivery, or swap any layer to open-source for data sovereignty / cost — MAF and the deterministic pipelines stay intact, so the swap is interface-only.</div>
+      </div>
+    </section>
+
     <div class="about-cards">
       <section class="card">
         <h2>🧠 The model &amp; platform</h2>
